@@ -34,12 +34,21 @@ describe('island state machine', () => {
     expect(state.activeAgentId).toBe('hermes')
   })
 
-  it('opens peek on hover and collapses on leave when idle', () => {
+  it('does not open on instant hover; opens on HOVER_OPEN and collapses on leave', () => {
     let state = createInitialIslandState()
     state = reduceIsland(state, { type: 'HOVER_ENTER' })
+    expect(state.mode).toBe('collapsed')
+    expect(state.hovered).toBe(true)
+    state = reduceIsland(state, { type: 'HOVER_OPEN' })
     expect(state.mode).toBe('peek')
     state = reduceIsland(state, { type: 'HOVER_LEAVE' })
     expect(state.mode).toBe('collapsed')
+  })
+
+  it('opens peek immediately on click', () => {
+    let state = createInitialIslandState()
+    state = reduceIsland(state, { type: 'CLICK_PILL' })
+    expect(state.mode).toBe('peek')
   })
 
   it('expands to approval and switches agent when a request arrives', () => {

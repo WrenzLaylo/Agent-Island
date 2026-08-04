@@ -17,9 +17,11 @@
 - [x] Live session status on tabs (`live · pid …`)
 - [x] Demo approvals **off by default** (peek → Demo to enable)
 - [x] Unit tests for adapters + launch
+- [x] Real approval prompt interception for Hermes dangerous-command panels
+- [x] Transparent pill without rectangular Windows smear
+- [ ] Claude/Codex approval bridges
 - [ ] Transparent click-through outside pill bounds
 - [ ] Installer / tray polish
-- [ ] Real approval prompt interception (Phase 4)
 
 ## Run
 

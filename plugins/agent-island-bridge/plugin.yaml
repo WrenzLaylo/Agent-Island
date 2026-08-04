@@ -1,0 +1,6 @@
+name: agent-island-bridge
+description: Bridges Hermes dangerous-command approvals to the Agent Island HUD
+version: 0.1.0
+hooks:
+  - on_session_start
+  - pre_approval_request

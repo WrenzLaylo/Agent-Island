@@ -3,7 +3,6 @@ import {
   AGENT_ORDER,
   type AgentId,
   type ApprovalRequest,
-  type IntegrationMode,
   type IslandSnapshot
 } from '@shared/contracts'
 import {
@@ -14,158 +13,86 @@ import {
   type IslandEvent
 } from '@shared/island-machine'
 import { canApproveRequest } from '@shared/approval-guard'
-import type { PtySessionInfo } from '@shared/pty-types'
 import { IslandShell } from './components/IslandShell'
-import { DemoControls } from './components/DemoControls'
 
-function sizeForMode(mode: IslandSnapshot['mode'], showDemo: boolean): { width: number; height: number } {
+const HOVER_OPEN_MS = 1000
+
+function sizeForMode(mode: IslandSnapshot['mode'], queueCount: number): { width: number; height: number } {
   switch (mode) {
     case 'collapsed':
-      return { width: 300, height: 56 }
+      return { width: queueCount > 0 ? 280 : 250, height: 52 }
     case 'peek':
     case 'success':
-      return { width: 460, height: showDemo ? 200 : 150 }
+      return { width: 420, height: 140 }
     case 'error':
-      return { width: 480, height: showDemo ? 220 : 160 }
+      return { width: 420, height: 150 }
     case 'approval':
-      return { width: 540, height: showDemo ? 380 : 300 }
+      return { width: 520, height: 280 }
     case 'expanded':
-      return { width: 720, height: showDemo ? 580 : 520 }
+      // No terminal expand — treat as peek.
+      return { width: 420, height: 140 }
     default:
-      return { width: 300, height: 56 }
+      return { width: 250, height: 52 }
   }
-}
-
-function shortActivity(version?: string): string {
-  if (!version) return 'Ready'
-  const match = version.match(/v?\d+\.\d+(?:\.\d+)?/)
-  return match ? `v${match[0].replace(/^v/, '')}` : 'Ready'
 }
 
 export function App() {
   const [state, setState] = useState<IslandSnapshot>(() => createInitialIslandState())
-  const [discoveryNote, setDiscoveryNote] = useState('Discovering agents…')
-  const [demoMode, setDemoMode] = useState(false)
+  const [statusNote, setStatusNote] = useState('Starting bridge…')
   const dismissTimer = useRef<number | null>(null)
+  const hoverTimer = useRef<number | null>(null)
+  const dragRef = useRef<{
+    active: boolean
+    startX: number
+    startY: number
+    originX: number
+    originY: number
+    moved: boolean
+  } | null>(null)
 
   const dispatch = (event: IslandEvent) => {
     setState((prev) => reduceIsland(prev, event))
   }
 
-  const handleSessionChange = (agentId: AgentId, info: PtySessionInfo | null, error?: string) => {
-    if (info?.alive) {
-      dispatch({
-        type: 'SET_AGENT_STATUS',
-        agentId,
-        status: 'running',
-        activityLabel: `live · pid ${info.pid ?? '?'}`,
-        available: true
-      })
-      return
-    }
-    if (error) {
-      const missing =
-        error.toLowerCase().includes('unavailable') || error.toLowerCase().includes('not found')
-      const exited = error.toLowerCase().startsWith('exited')
-      dispatch({
-        type: 'SET_AGENT_STATUS',
-        agentId,
-        status: missing ? 'offline' : exited ? 'idle' : 'error',
-        activityLabel: exited ? 'Session ended' : error.slice(0, 48),
-        lastError: error,
-        available: !missing
-      })
-    }
-  }
-
   const approval = currentApproval(state)
   const queueCount = pendingApprovalCount(state)
   const active = state.agents[state.activeAgentId]
-  const showDemo =
-    demoMode &&
-    (state.mode === 'peek' ||
-      state.mode === 'expanded' ||
-      state.mode === 'approval' ||
-      state.mode === 'success' ||
-      state.mode === 'error')
-  const size = useMemo(() => sizeForMode(state.mode, showDemo), [state.mode, showDemo])
+  const size = useMemo(() => sizeForMode(state.mode, queueCount), [state.mode, queueCount])
 
   useEffect(() => {
     const api = window.agentIsland
     if (!api) {
-      setDiscoveryNote('Bridge offline — reload app')
+      setStatusNote('Bridge offline — reload app')
       return
     }
 
-    void api.discoverAgents().then((result: unknown) => {
-      const data = result as {
-        agents: Array<{
-          id: AgentId
-          available: boolean
-          path?: string
-          version?: string
-          notes?: string
-          integrationMode?: IntegrationMode
-        }>
-      }
-      const lines = data.agents.map((agent) => {
-        if (!agent.available) return `${agent.id}: missing`
-        return `${agent.id}: ${shortActivity(agent.version)}`
+    // Mark Hermes as listening target (no local PTY).
+    for (const id of AGENT_ORDER) {
+      dispatch({
+        type: 'SET_AGENT_STATUS',
+        agentId: id,
+        status: id === 'hermes' ? 'idle' : 'offline',
+        activityLabel: id === 'hermes' ? 'Bridge ready' : 'Not connected',
+        available: id === 'hermes',
+        integrationMode: id === 'hermes' ? 'structured' : 'unavailable'
       })
-      setDiscoveryNote(lines.join(' · '))
+    }
 
-      for (const agent of data.agents) {
+    void api.discoverAgents?.().then((result: unknown) => {
+      const data = result as { agents?: Array<{ id: AgentId; available: boolean; version?: string }> }
+      const hermes = data.agents?.find((a) => a.id === 'hermes')
+      if (hermes?.available) {
+        setStatusNote(`Hermes bridge active${hermes.version ? ` · ${hermes.version}` : ''}`)
         dispatch({
           type: 'SET_AGENT_STATUS',
-          agentId: agent.id,
-          status: agent.available ? 'idle' : 'offline',
-          activityLabel: agent.available ? shortActivity(agent.version) : 'Not found',
-          available: agent.available,
-          integrationMode: agent.integrationMode ?? (agent.available ? 'terminal-basic' : 'unavailable')
-        })
-      }
-    })
-
-    const offToggle = api.onToggle(() => {
-      setState((prev) =>
-        reduceIsland(prev, {
-          type: prev.mode === 'collapsed' || prev.mode === 'peek' ? 'EXPAND' : 'COLLAPSE'
-        })
-      )
-    })
-    const offSelect = api.onSelectAgent((agentId: AgentId) => {
-      dispatch({ type: 'SELECT_AGENT', agentId })
-    })
-    const offSession = api.onPtySession?.((session: PtySessionInfo) => {
-      if (session.alive) {
-        dispatch({
-          type: 'SET_AGENT_STATUS',
-          agentId: session.agentId,
-          status: 'running',
-          activityLabel: `live · pid ${session.pid ?? '?'}`,
-          available: true
+          agentId: 'hermes',
+          status: 'idle',
+          activityLabel: 'Listening',
+          available: true,
+          integrationMode: 'structured'
         })
       } else {
-        dispatch({
-          type: 'SET_AGENT_STATUS',
-          agentId: session.agentId,
-          status: 'idle',
-          activityLabel: 'Session ended',
-          available: true
-        })
-      }
-    })
-
-    void api.ptyList?.().then((sessions: PtySessionInfo[]) => {
-      for (const session of sessions) {
-        if (!session.alive) continue
-        dispatch({
-          type: 'SET_AGENT_STATUS',
-          agentId: session.agentId,
-          status: 'running',
-          activityLabel: `live · pid ${session.pid ?? '?'}`,
-          available: true
-        })
+        setStatusNote('Hermes not found — install/login still required for bridge')
       }
     })
 
@@ -177,7 +104,6 @@ export function App() {
     const offApprovalCleared = api.onApprovalCleared?.((request: unknown) => {
       const req = request as ApprovalRequest
       if (!req?.id) return
-      // Soft-clear: mark answered/superseded via deny path only if still pending in UI.
       setState((prev) => {
         const existing = prev.approvals[req.id]
         if (!existing || existing.answered) return prev
@@ -188,13 +114,28 @@ export function App() {
         })
       })
     })
+    const offToggle = api.onToggle?.(() => {
+      setState((prev) =>
+        reduceIsland(prev, {
+          type: prev.mode === 'collapsed' ? 'CLICK_PILL' : 'COLLAPSE'
+        })
+      )
+    })
+
+    // Pull any already-pending bridge items.
+    void api.listBridgeApprovals?.().then((items: unknown) => {
+      const list = items as ApprovalRequest[]
+      if (!Array.isArray(list)) return
+      for (const req of list) {
+        if (req?.id) dispatch({ type: 'ENQUEUE_APPROVAL', request: req })
+      }
+    })
 
     return () => {
-      offToggle()
-      offSelect()
-      offSession?.()
       offApproval?.()
       offApprovalCleared?.()
+      offToggle?.()
+      if (hoverTimer.current) window.clearTimeout(hoverTimer.current)
     }
   }, [])
 
@@ -210,11 +151,18 @@ export function App() {
     if (dismissTimer.current) window.clearTimeout(dismissTimer.current)
     dismissTimer.current = window.setTimeout(() => {
       dispatch({ type: 'DISMISS_TRANSIENT' })
-    }, 1800)
+    }, 1600)
     return () => {
       if (dismissTimer.current) window.clearTimeout(dismissTimer.current)
     }
   }, [state.mode, state.hovered, state.focused, state.message])
+
+  // Auto-open when a real approval arrives.
+  useEffect(() => {
+    if (queueCount > 0 && state.mode === 'collapsed') {
+      dispatch({ type: 'EXPAND' })
+    }
+  }, [queueCount, state.mode])
 
   const approveEnabled = approval
     ? canApproveRequest({ request: approval, displayedRequestId: approval.id }).canApprove
@@ -222,10 +170,9 @@ export function App() {
 
   const onApprove = async () => {
     if (!approval) return
-    if (approval.source === 'hermes-terminal') {
-      const api = window.agentIsland
-      const result = await api.ptyAnswerApproval({
-        agentId: approval.agentId,
+    const api = window.agentIsland
+    if (approval.source === 'hermes-terminal' && api?.answerBridgeApproval) {
+      const result = await api.answerBridgeApproval({
         requestId: approval.id,
         decision: 'approve'
       })
@@ -233,18 +180,15 @@ export function App() {
         dispatch({ type: 'SET_ERROR', message: result.error ?? 'Approve failed' })
         return
       }
-      dispatch({ type: 'ANSWER_APPROVAL', requestId: approval.id, decision: 'approve' })
-      return
     }
     dispatch({ type: 'ANSWER_APPROVAL', requestId: approval.id, decision: 'approve' })
   }
 
   const onDeny = async () => {
     if (!approval) return
-    if (approval.source === 'hermes-terminal') {
-      const api = window.agentIsland
-      const result = await api.ptyAnswerApproval({
-        agentId: approval.agentId,
+    const api = window.agentIsland
+    if (approval.source === 'hermes-terminal' && api?.answerBridgeApproval) {
+      const result = await api.answerBridgeApproval({
         requestId: approval.id,
         decision: 'deny'
       })
@@ -252,101 +196,94 @@ export function App() {
         dispatch({ type: 'SET_ERROR', message: result.error ?? 'Deny failed' })
         return
       }
-      dispatch({ type: 'ANSWER_APPROVAL', requestId: approval.id, decision: 'deny' })
-      return
     }
     dispatch({ type: 'ANSWER_APPROVAL', requestId: approval.id, decision: 'deny' })
   }
 
-  const simulateApproval = (agentId: AgentId) => {
-    const now = Date.now()
-    const request: ApprovalRequest = {
-      id: `demo-${now}`,
-      agentId,
-      summary: agentId === 'codex' ? 'Install dependency' : 'Run shell command',
-      detail:
-        agentId === 'codex'
-          ? 'npm install @tanstack/react-query'
-          : agentId === 'claude'
-            ? 'git push origin main'
-            : 'Remove-Item -Recurse node_modules',
-      cwd: 'C:\\Users\\OASIS\\Downloads\\agent-island',
-      risk: agentId === 'hermes' ? 'high' : agentId === 'codex' ? 'elevated' : 'low',
-      riskReason:
-        agentId === 'hermes'
-          ? 'Destructive recursive delete'
-          : agentId === 'codex'
-            ? 'Installs packages from the network'
-            : 'Pushes local commits',
-      createdAt: now,
-      expiresAt: now + 5 * 60_000,
-      processAlive: true,
-      waitingForInput: true,
-      answered: false,
-      superseded: false,
-      source: 'demo',
-      fingerprint: `demo-${now}`
+  const clearHoverTimer = () => {
+    if (hoverTimer.current) {
+      window.clearTimeout(hoverTimer.current)
+      hoverTimer.current = null
     }
-    dispatch({ type: 'ENQUEUE_APPROVAL', request })
   }
 
+  const onMouseEnter = () => {
+    dispatch({ type: 'HOVER_ENTER' })
+    clearHoverTimer()
+    if (state.mode === 'collapsed') {
+      hoverTimer.current = window.setTimeout(() => {
+        dispatch({ type: 'HOVER_OPEN' })
+      }, HOVER_OPEN_MS)
+    }
+  }
+
+  const onMouseLeave = () => {
+    clearHoverTimer()
+    dispatch({ type: 'HOVER_LEAVE' })
+  }
+
+  // Manual drag (Windows-friendly; does not steal clicks from buttons).
+  useEffect(() => {
+    const onMove = (e: PointerEvent) => {
+      const drag = dragRef.current
+      const api = window.agentIsland
+      if (!drag?.active || !api?.setPosition || !api.getBounds) return
+      const dx = e.screenX - drag.startX
+      const dy = e.screenY - drag.startY
+      if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true
+      void api.setPosition(drag.originX + dx, drag.originY + dy)
+    }
+    const onUp = () => {
+      if (dragRef.current) dragRef.current.active = false
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    return () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+    }
+  }, [])
+
+  useEffect(() => {
+    const onDown = async (e: PointerEvent) => {
+      const target = e.target as HTMLElement | null
+      if (!target?.closest?.('.drag-handle')) return
+      e.preventDefault()
+      const api = window.agentIsland
+      if (!api?.getBounds) return
+      const bounds = await api.getBounds()
+      if (!bounds) return
+      dragRef.current = {
+        active: true,
+        startX: e.screenX,
+        startY: e.screenY,
+        originX: bounds.x,
+        originY: bounds.y,
+        moved: false
+      }
+    }
+    window.addEventListener('pointerdown', onDown)
+    return () => window.removeEventListener('pointerdown', onDown)
+  }, [])
+
   return (
-    <div
-      className="stage"
-      onMouseEnter={() => dispatch({ type: 'HOVER_ENTER' })}
-      onMouseLeave={() => dispatch({ type: 'HOVER_LEAVE' })}
-    >
-      <div className={`island-frame ${showDemo ? 'with-demo' : 'fill'}`}>
+    <div className="stage" onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave}>
+      <div className="island-frame fill">
         <IslandShell
           state={state}
           active={active}
           approval={approval}
           queueCount={queueCount}
           approveEnabled={approveEnabled}
-          discoveryNote={discoveryNote}
-          demoMode={demoMode}
+          statusNote={statusNote}
           onSelectAgent={(agentId) => dispatch({ type: 'SELECT_AGENT', agentId })}
           onClickPill={() => dispatch({ type: 'CLICK_PILL' })}
-          onExpand={() => dispatch({ type: 'EXPAND' })}
           onCollapse={() => dispatch({ type: 'COLLAPSE' })}
-          onApprove={onApprove}
-          onDeny={onDeny}
+          onApprove={() => void onApprove()}
+          onDeny={() => void onDeny()}
           onDismiss={() => dispatch({ type: 'DISMISS_TRANSIENT' })}
-          onSessionChange={handleSessionChange}
-          onToggleDemo={() => setDemoMode((v) => !v)}
         />
       </div>
-
-      {showDemo && (
-        <div className="demo-dock">
-          <DemoControls
-            agents={AGENT_ORDER}
-            onSimulateApproval={simulateApproval}
-            onThinking={() =>
-              dispatch({
-                type: 'SET_AGENT_STATUS',
-                agentId: state.activeAgentId,
-                status: 'thinking',
-                activityLabel: 'Thinking…',
-                available: true
-              })
-            }
-            onRunning={() =>
-              dispatch({
-                type: 'SET_AGENT_STATUS',
-                agentId: state.activeAgentId,
-                status: 'running',
-                activityLabel: 'Editing files…',
-                available: true
-              })
-            }
-            onComplete={() => dispatch({ type: 'COMPLETE', message: 'Task finished' })}
-            onError={() =>
-              dispatch({ type: 'SET_ERROR', message: 'Agent process exited unexpectedly' })
-            }
-          />
-        </div>
-      )}
     </div>
   )
 }

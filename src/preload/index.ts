@@ -37,6 +37,13 @@ export interface IslandApi {
   onApprovalAnswered: (
     handler: (payload: { agentId: AgentId; requestId: string; decision: 'approve' | 'deny' }) => void
   ) => () => void
+  listBridgeApprovals: () => Promise<unknown>
+  answerBridgeApproval: (request: {
+    requestId: string
+    decision: 'approve' | 'deny'
+  }) => Promise<{ ok: boolean; error?: string }>
+  setPosition: (x: number, y: number) => Promise<boolean>
+  getBounds: () => Promise<{ x: number; y: number; width: number; height: number } | null>
 }
 
 const api: IslandApi = {
@@ -93,7 +100,11 @@ const api: IslandApi = {
     ) => handler(payload)
     ipcRenderer.on('island:approval-answered', listener)
     return () => ipcRenderer.removeListener('island:approval-answered', listener)
-  }
+  },
+  listBridgeApprovals: () => ipcRenderer.invoke('bridge:list-approvals'),
+  answerBridgeApproval: (request) => ipcRenderer.invoke('bridge:answer-approval', request),
+  setPosition: (x, y) => ipcRenderer.invoke('island:set-position', x, y),
+  getBounds: () => ipcRenderer.invoke('island:get-bounds')
 }
 
 contextBridge.exposeInMainWorld('agentIsland', api)

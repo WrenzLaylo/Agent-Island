@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { discoverAgents } from './agents/discover'
 import type { AgentDiscoveryResult, DiscoveredAgent } from './agents/discover'
 import { PtyManager, shellHomeCwd } from './agents/process-manager'
+import { ApprovalBridgeWatcher, writeDecision } from './agents/approval-bridge'
 import type { AgentId } from '../shared/contracts'
 import {
   isAgentId,
@@ -18,23 +19,35 @@ import {
 let mainWindow: BrowserWindow | null = null
 let discoveryCache: AgentDiscoveryResult | null = null
 const ptyManager = new PtyManager({ defaultCwd: shellHomeCwd(), forceKillMs: 1500 })
+const bridgeWatcher = new ApprovalBridgeWatcher()
 
 const isDev = !app.isPackaged
 
+/** User-dragged anchor. null = first launch centered near top. */
+let windowAnchor: { x: number; y: number } | null = null
+
 function getIslandBounds(width: number, height: number) {
-  const display = screen.getPrimaryDisplay()
-  const { width: sw } = display.workAreaSize
-  const { x, y } = display.workArea
-  return {
-    x: Math.round(x + (sw - width) / 2),
-    y: Math.round(y + 12),
-    width,
-    height
-  }
+  const display = screen.getDisplayNearestPoint(
+    windowAnchor
+      ? { x: windowAnchor.x + Math.floor(width / 2), y: windowAnchor.y + 8 }
+      : screen.getCursorScreenPoint()
+  )
+  const { x: ox, y: oy, width: sw, height: sh } = display.workArea
+  let x = windowAnchor?.x ?? Math.round(ox + (sw - width) / 2)
+  let y = windowAnchor?.y ?? Math.round(oy + 12)
+  x = Math.min(Math.max(ox, x), Math.max(ox, ox + sw - width))
+  y = Math.min(Math.max(oy, y), Math.max(oy, oy + sh - height))
+  return { x, y, width, height }
+}
+
+function rememberWindowPosition(): void {
+  if (!mainWindow) return
+  const b = mainWindow.getBounds()
+  windowAnchor = { x: b.x, y: b.y }
 }
 
 function createWindow(): void {
-  const initial = getIslandBounds(300, 56)
+  const initial = getIslandBounds(250, 52)
   const preloadPath = join(__dirname, '../preload/index.js')
   if (!existsSync(preloadPath)) {
     console.error('Missing preload script:', preloadPath)
@@ -52,6 +65,8 @@ function createWindow(): void {
     skipTaskbar: false,
     hasShadow: false,
     thickFrame: false,
+    roundedCorners: true,
+    backgroundMaterial: 'none',
     backgroundColor: '#00000000',
     title: 'Agent Island',
     webPreferences: {
@@ -63,10 +78,17 @@ function createWindow(): void {
     }
   })
 
-  // Helps Windows DWM treat the window as layered/transparent.
   mainWindow.setBackgroundColor('#00000000')
+  try {
+    ;(mainWindow as unknown as { setBackgroundMaterial?: (m: string) => void }).setBackgroundMaterial?.(
+      'none'
+    )
+  } catch {
+    // ignore
+  }
   mainWindow.setAlwaysOnTop(true, 'screen-saver')
   mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: false })
+  mainWindow.on('moved', () => rememberWindowPosition())
 
   if (isDev && process.env.ELECTRON_RENDERER_URL) {
     mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
@@ -107,6 +129,20 @@ function registerIpc(): void {
     return true
   })
 
+  ipcMain.handle('island:set-position', (_event, x: number, y: number) => {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error('Invalid position')
+    windowAnchor = { x: Math.round(x), y: Math.round(y) }
+    if (!mainWindow) return false
+    const b = mainWindow.getBounds()
+    mainWindow.setBounds(
+      { x: windowAnchor.x, y: windowAnchor.y, width: b.width, height: b.height },
+      false
+    )
+    return true
+  })
+
+  ipcMain.handle('island:get-bounds', () => mainWindow?.getBounds() ?? null)
+
   ipcMain.handle('island:discover-agents', async () => {
     discoveryCache = await discoverAgents()
     return discoveryCache
@@ -115,105 +151,79 @@ function registerIpc(): void {
   ipcMain.handle('island:get-discovery', () => discoveryCache)
 
   ipcMain.handle('island:quit', async () => {
+    bridgeWatcher.stop()
     await ptyManager.stopAll()
     app.quit()
   })
 
+  // Legacy PTY APIs kept for compatibility; HUD no longer hosts agents by default.
   ipcMain.handle('pty:start', (_event, request: PtyStartRequest) => {
-    if (!request || !isAgentId(request.agentId)) {
-      return { ok: false, error: 'Invalid agentId' }
-    }
+    if (!request || !isAgentId(request.agentId)) return { ok: false, error: 'Invalid agentId' }
     const sizeError = validateSize(request.cols, request.rows)
     if (sizeError) return { ok: false, error: sizeError }
     const agent = agentFromDiscovery(request.agentId)
     return ptyManager.start(request.agentId, agent, request.cols, request.rows, request.cwd)
   })
-
   ipcMain.handle('pty:write', (_event, request: PtyWriteRequest) => {
     if (!request || !isAgentId(request.agentId) || typeof request.data !== 'string') {
       return { ok: false, error: 'Invalid write request' }
     }
-    if (request.data.length > MAX_PTY_WRITE_CHARS) {
-      return { ok: false, error: 'Write payload too large' }
-    }
+    if (request.data.length > MAX_PTY_WRITE_CHARS) return { ok: false, error: 'Write payload too large' }
     return ptyManager.write(request.agentId, request.data)
   })
-
   ipcMain.handle('pty:resize', (_event, request: PtyResizeRequest) => {
-    if (!request || !isAgentId(request.agentId)) {
-      return { ok: false, error: 'Invalid resize request' }
-    }
+    if (!request || !isAgentId(request.agentId)) return { ok: false, error: 'Invalid resize request' }
     return ptyManager.resize(request.agentId, request.cols, request.rows)
   })
-
   ipcMain.handle('pty:stop', async (_event, request: PtyStopRequest) => {
-    if (!request || !isAgentId(request.agentId)) {
-      return { ok: false, error: 'Invalid stop request' }
-    }
+    if (!request || !isAgentId(request.agentId)) return { ok: false, error: 'Invalid stop request' }
     return ptyManager.stop(request.agentId, Boolean(request.force))
   })
-
   ipcMain.handle('pty:list', () => ptyManager.list())
   ipcMain.handle('pty:replay', (_event, agentId: unknown) => {
     if (!isAgentId(agentId)) return ''
     return ptyManager.getReplay(agentId)
   })
 
+  ipcMain.handle('bridge:list-approvals', () => bridgeWatcher.list())
   ipcMain.handle(
-    'pty:answer-approval',
-    (
-      _event,
-      request: { agentId?: unknown; requestId?: unknown; decision?: unknown }
-    ) => {
-      if (!request || !isAgentId(request.agentId) || typeof request.requestId !== 'string') {
-        return { ok: false, error: 'Invalid approval answer request' }
+    'bridge:answer-approval',
+    async (_event, request: { requestId?: unknown; decision?: unknown }) => {
+      if (!request || typeof request.requestId !== 'string') {
+        return { ok: false, error: 'Invalid request' }
       }
       if (request.decision !== 'approve' && request.decision !== 'deny') {
         return { ok: false, error: 'Invalid decision' }
       }
-      return ptyManager.answerApproval(request.agentId, request.requestId, request.decision)
+      const choice = request.decision === 'approve' ? 'once' : 'deny'
+      try {
+        await writeDecision(request.requestId, choice)
+        return { ok: true }
+      } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : String(error) }
+      }
     }
   )
 }
 
-function wirePtyEvents(): void {
-  ptyManager.on('data', (event) => {
-    mainWindow?.webContents.send('pty:data', event)
-  })
-  ptyManager.on('exit', (event) => {
-    mainWindow?.webContents.send('pty:exit', event)
-  })
-  ptyManager.on('session', (session) => {
-    mainWindow?.webContents.send('pty:session', session)
-  })
-  ptyManager.on('approval', (request) => {
+function wireBridgeEvents(): void {
+  bridgeWatcher.on('raised', (request) => {
     mainWindow?.webContents.send('island:approval', request)
   })
-  ptyManager.on('approval-cleared', (request) => {
+  bridgeWatcher.on('cleared', (request) => {
     mainWindow?.webContents.send('island:approval-cleared', request)
-  })
-  ptyManager.on('approval-answered', (payload) => {
-    mainWindow?.webContents.send('island:approval-answered', payload)
   })
 }
 
 app.whenReady().then(async () => {
   registerIpc()
-  wirePtyEvents()
+  wireBridgeEvents()
+  void bridgeWatcher.start()
   discoveryCache = await discoverAgents()
   createWindow()
 
   globalShortcut.register('Control+Alt+Space', () => {
     mainWindow?.webContents.send('island:toggle')
-  })
-  globalShortcut.register('Control+Alt+1', () => {
-    mainWindow?.webContents.send('island:select-agent', 'claude')
-  })
-  globalShortcut.register('Control+Alt+2', () => {
-    mainWindow?.webContents.send('island:select-agent', 'codex')
-  })
-  globalShortcut.register('Control+Alt+3', () => {
-    mainWindow?.webContents.send('island:select-agent', 'hermes')
   })
 
   app.on('activate', () => {
@@ -228,6 +238,7 @@ app.on('before-quit', (event) => {
   event.preventDefault()
   isQuitting = true
   globalShortcut.unregisterAll()
+  bridgeWatcher.stop()
   void ptyManager.stopAll().finally(() => {
     app.exit(0)
   })

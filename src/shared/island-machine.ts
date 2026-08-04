@@ -13,6 +13,7 @@ import { canApproveRequest } from './approval-guard'
 export type IslandEvent =
   | { type: 'HOVER_ENTER' }
   | { type: 'HOVER_LEAVE' }
+  | { type: 'HOVER_OPEN' }
   | { type: 'FOCUS' }
   | { type: 'BLUR' }
   | { type: 'CLICK_PILL' }
@@ -41,8 +42,11 @@ export function createInitialIslandState(cwd = ''): IslandSnapshot {
 function nextModeAfterInteraction(state: IslandSnapshot): IslandMode {
   if (state.approvalQueue.length > 0) return 'approval'
   if (state.mode === 'expanded') return 'expanded'
-  if (state.hovered || state.focused) return 'peek'
-  return 'collapsed'
+  // Hover alone does not open — only click, HOVER_OPEN (delayed), or focus/approval.
+  if (state.focused && state.mode === 'peek') return 'peek'
+  if (state.mode === 'peek' && state.hovered) return 'peek'
+  if (state.mode === 'peek' && !state.hovered && !state.focused) return 'collapsed'
+  return state.mode === 'success' || state.mode === 'error' ? state.mode : 'collapsed'
 }
 
 function withAgent(
@@ -62,12 +66,25 @@ function withAgent(
 export function reduceIsland(state: IslandSnapshot, event: IslandEvent): IslandSnapshot {
   switch (event.type) {
     case 'HOVER_ENTER': {
-      const next = { ...state, hovered: true }
-      return { ...next, mode: nextModeAfterInteraction(next) }
+      // Track hover only — App opens peek after a long-hover delay via HOVER_OPEN.
+      return { ...state, hovered: true }
     }
     case 'HOVER_LEAVE': {
       const next = { ...state, hovered: false }
-      return { ...next, mode: nextModeAfterInteraction(next) }
+      if (state.approvalQueue.length > 0) return { ...next, mode: 'approval' }
+      if (state.mode === 'expanded') return next
+      if (state.mode === 'peek' && !state.focused) {
+        return { ...next, mode: 'collapsed', focused: false }
+      }
+      return next
+    }
+    case 'HOVER_OPEN': {
+      if (!state.hovered) return state
+      if (state.mode === 'expanded' || state.mode === 'approval') return state
+      return {
+        ...state,
+        mode: state.approvalQueue.length ? 'approval' : 'peek'
+      }
     }
     case 'FOCUS': {
       const next = { ...state, focused: true }
@@ -95,7 +112,11 @@ export function reduceIsland(state: IslandSnapshot, event: IslandEvent): IslandS
       }
     }
     case 'EXPAND':
-      return { ...state, mode: state.approvalQueue.length ? 'approval' : 'expanded', focused: true }
+      return {
+        ...state,
+        mode: state.approvalQueue.length ? 'approval' : 'peek',
+        focused: true
+      }
     case 'COLLAPSE':
       return {
         ...state,
