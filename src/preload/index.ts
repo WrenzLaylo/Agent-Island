@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { AgentId } from '../shared/contracts'
+import type { AgentId, IslandWindowLayout } from '../shared/contracts'
 import type {
   PtyDataEvent,
   PtyExitEvent,
@@ -42,7 +42,10 @@ export interface IslandApi {
     requestId: string
     decision: 'approve' | 'deny'
   }) => Promise<{ ok: boolean; error?: string }>
+  moveWindow: (x: number, y: number) => void
   setPosition: (x: number, y: number) => Promise<boolean>
+  finishDrag: () => Promise<IslandWindowLayout>
+  getLayout: () => Promise<IslandWindowLayout>
   getBounds: () => Promise<{ x: number; y: number; width: number; height: number } | null>
 }
 
@@ -103,7 +106,10 @@ const api: IslandApi = {
   },
   listBridgeApprovals: () => ipcRenderer.invoke('bridge:list-approvals'),
   answerBridgeApproval: (request) => ipcRenderer.invoke('bridge:answer-approval', request),
+  moveWindow: (x, y) => ipcRenderer.send('island:move-window', x, y),
   setPosition: (x, y) => ipcRenderer.invoke('island:set-position', x, y),
+  finishDrag: () => ipcRenderer.invoke('island:finish-drag'),
+  getLayout: () => ipcRenderer.invoke('island:get-layout'),
   getBounds: () => ipcRenderer.invoke('island:get-bounds')
 }
 

@@ -1,5 +1,12 @@
 export type AgentId = 'claude' | 'codex' | 'hermes'
 
+export type DockSide = 'left' | 'right'
+
+export interface IslandWindowLayout {
+  docked: DockSide | null
+  bounds: { x: number; y: number; width: number; height: number } | null
+}
+
 export type AgentStatus =
   | 'offline'
   | 'idle'

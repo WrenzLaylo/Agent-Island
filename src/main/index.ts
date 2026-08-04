@@ -5,7 +5,7 @@ import { discoverAgents } from './agents/discover'
 import type { AgentDiscoveryResult, DiscoveredAgent } from './agents/discover'
 import { PtyManager, shellHomeCwd } from './agents/process-manager'
 import { ApprovalBridgeWatcher, writeDecision } from './agents/approval-bridge'
-import type { AgentId } from '../shared/contracts'
+import type { AgentId, DockSide, IslandWindowLayout } from '../shared/contracts'
 import {
   isAgentId,
   MAX_PTY_WRITE_CHARS,
@@ -22,73 +22,129 @@ const ptyManager = new PtyManager({ defaultCwd: shellHomeCwd(), forceKillMs: 150
 const bridgeWatcher = new ApprovalBridgeWatcher()
 
 const isDev = !app.isPackaged
+const EDGE_GAP = 8
+const DOCK_THRESHOLD = 36
 
-/** User-dragged anchor. null = first launch centered near top. */
+/** User-dragged anchor. null = first launch centred near the top. */
 let windowAnchor: { x: number; y: number } | null = null
+let dockSide: DockSide | null = null
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max)
+}
+
+function displayForWindow(width: number, height: number) {
+  if (mainWindow) {
+    const bounds = mainWindow.getBounds()
+    return screen.getDisplayNearestPoint({
+      x: bounds.x + Math.floor(bounds.width / 2),
+      y: bounds.y + Math.floor(bounds.height / 2)
+    })
+  }
+
+  if (windowAnchor) {
+    return screen.getDisplayNearestPoint({
+      x: windowAnchor.x + Math.floor(width / 2),
+      y: windowAnchor.y + Math.floor(height / 2)
+    })
+  }
+
+  return screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+}
 
 function getIslandBounds(width: number, height: number) {
-  const display = screen.getDisplayNearestPoint(
-    windowAnchor
-      ? { x: windowAnchor.x + Math.floor(width / 2), y: windowAnchor.y + 8 }
-      : screen.getCursorScreenPoint()
-  )
+  const display = displayForWindow(width, height)
   const { x: ox, y: oy, width: sw, height: sh } = display.workArea
-  let x = windowAnchor?.x ?? Math.round(ox + (sw - width) / 2)
-  let y = windowAnchor?.y ?? Math.round(oy + 12)
-  x = Math.min(Math.max(ox, x), Math.max(ox, ox + sw - width))
-  y = Math.min(Math.max(oy, y), Math.max(oy, oy + sh - height))
+  const current = mainWindow?.getBounds()
+
+  let x: number
+  let y: number
+
+  if (dockSide) {
+    x = dockSide === 'left' ? ox + EDGE_GAP : ox + sw - width - EDGE_GAP
+    const centreY = current
+      ? current.y + current.height / 2
+      : (windowAnchor?.y ?? oy + 16) + height / 2
+    y = Math.round(centreY - height / 2)
+  } else if (current) {
+    const centreX = current.x + current.width / 2
+    const centreY = current.y + current.height / 2
+    x = Math.round(centreX - width / 2)
+
+    // Near the top, grow down like a real Dynamic Island. Elsewhere, grow from centre.
+    y = current.y <= oy + 28 ? current.y : Math.round(centreY - height / 2)
+  } else {
+    x = windowAnchor?.x ?? Math.round(ox + (sw - width) / 2)
+    y = windowAnchor?.y ?? Math.round(oy + 12)
+  }
+
+  x = clamp(x, ox, Math.max(ox, ox + sw - width))
+  y = clamp(y, oy, Math.max(oy, oy + sh - height))
   return { x, y, width, height }
 }
 
 function rememberWindowPosition(): void {
   if (!mainWindow) return
-  const b = mainWindow.getBounds()
-  windowAnchor = { x: b.x, y: b.y }
+  const bounds = mainWindow.getBounds()
+  windowAnchor = { x: bounds.x, y: bounds.y }
+}
+
+function currentLayout(): IslandWindowLayout {
+  return {
+    docked: dockSide,
+    bounds: mainWindow?.getBounds() ?? null
+  }
 }
 
 function createWindow(): void {
-  const initial = getIslandBounds(236, 48)
+  const initial = getIslandBounds(318, 66)
   const preloadPath = join(__dirname, '../preload/index.js')
   if (!existsSync(preloadPath)) {
     console.error('Missing preload script:', preloadPath)
   }
 
   mainWindow = new BrowserWindow({
-      ...initial,
-      frame: false,
-      // Solid window — Windows transparent layers paint a white/gray plate
-      // behind rounded CSS. OS roundedCorners shapes the pill instead.
-      transparent: false,
-      alwaysOnTop: true,
-      resizable: false,
-      maximizable: false,
-      minimizable: false,
-      fullscreenable: false,
-      skipTaskbar: false,
-      hasShadow: true,
-      thickFrame: false,
-      roundedCorners: true,
-      backgroundColor: '#0c0c10',
-      title: 'Agent Island',
-      webPreferences: {
-        preload: preloadPath,
-        contextIsolation: true,
-        nodeIntegration: false,
-        sandbox: false,
-        backgroundThrottling: false
-      }
-    })
+    ...initial,
+    show: false,
+    frame: false,
+    transparent: true,
+    alwaysOnTop: true,
+    resizable: false,
+    maximizable: false,
+    minimizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    hasShadow: false,
+    thickFrame: false,
+    roundedCorners: false,
+    backgroundColor: '#00000000',
+    ...(process.platform === 'darwin'
+      ? { vibrancy: 'hud' as const, visualEffectState: 'active' as const }
+      : {}),
+    title: 'Agent Island',
+    webPreferences: {
+      preload: preloadPath,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+      backgroundThrottling: false
+    }
+  })
 
-    mainWindow.setBackgroundColor('#0c0c10')
-    mainWindow.setAlwaysOnTop(true, 'screen-saver')
-    mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: false })
-    mainWindow.on('moved', () => rememberWindowPosition())
+  mainWindow.setBackgroundColor('#00000000')
+  mainWindow.setAlwaysOnTop(true, 'screen-saver')
+  mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: false })
+  mainWindow.on('moved', rememberWindowPosition)
 
   if (isDev && process.env.ELECTRON_RENDERER_URL) {
-    mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
+    void mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
   } else {
-    mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
+    void mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
+
+  mainWindow.once('ready-to-show', () => {
+    mainWindow?.showInactive()
+  })
 
   mainWindow.on('closed', () => {
     mainWindow = null
@@ -99,10 +155,52 @@ function resizeIsland(width: number, height: number): void {
   if (!mainWindow) return
   const bounds = getIslandBounds(width, height)
   mainWindow.setBounds(bounds, true)
+  rememberWindowPosition()
+}
+
+function moveIsland(x: number, y: number): boolean {
+  if (!mainWindow || !Number.isFinite(x) || !Number.isFinite(y)) return false
+
+  const bounds = mainWindow.getBounds()
+  const display = screen.getDisplayNearestPoint({
+    x: Math.round(x + bounds.width / 2),
+    y: Math.round(y + bounds.height / 2)
+  })
+  const area = display.workArea
+  const nextX = clamp(Math.round(x), area.x, Math.max(area.x, area.x + area.width - bounds.width))
+  const nextY = clamp(Math.round(y), area.y, Math.max(area.y, area.y + area.height - bounds.height))
+
+  mainWindow.setPosition(nextX, nextY, false)
+  windowAnchor = { x: nextX, y: nextY }
+  return true
+}
+
+function finishIslandDrag(): IslandWindowLayout {
+  if (!mainWindow) return currentLayout()
+
+  const bounds = mainWindow.getBounds()
+  const display = screen.getDisplayNearestPoint({
+    x: bounds.x + Math.floor(bounds.width / 2),
+    y: bounds.y + Math.floor(bounds.height / 2)
+  })
+  const area = display.workArea
+  const leftDistance = Math.abs(bounds.x - area.x)
+  const rightDistance = Math.abs(area.x + area.width - (bounds.x + bounds.width))
+
+  if (leftDistance <= DOCK_THRESHOLD || rightDistance <= DOCK_THRESHOLD) {
+    dockSide = leftDistance <= rightDistance ? 'left' : 'right'
+    const snapped = getIslandBounds(bounds.width, bounds.height)
+    mainWindow.setBounds(snapped, true)
+  } else {
+    dockSide = null
+  }
+
+  rememberWindowPosition()
+  return currentLayout()
 }
 
 function agentFromDiscovery(agentId: AgentId): DiscoveredAgent | undefined {
-  return discoveryCache?.agents.find((a) => a.id === agentId)
+  return discoveryCache?.agents.find((agent) => agent.id === agentId)
 }
 
 function registerIpc(): void {
@@ -112,7 +210,7 @@ function registerIpc(): void {
       typeof height !== 'number' ||
       !Number.isFinite(width) ||
       !Number.isFinite(height) ||
-      width < 120 ||
+      width < 56 ||
       width > 1200 ||
       height < 48 ||
       height > 900
@@ -123,18 +221,17 @@ function registerIpc(): void {
     return true
   })
 
-  ipcMain.handle('island:set-position', (_event, x: number, y: number) => {
-    if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error('Invalid position')
-    windowAnchor = { x: Math.round(x), y: Math.round(y) }
-    if (!mainWindow) return false
-    const b = mainWindow.getBounds()
-    mainWindow.setBounds(
-      { x: windowAnchor.x, y: windowAnchor.y, width: b.width, height: b.height },
-      false
-    )
-    return true
+  ipcMain.on('island:move-window', (_event, x: number, y: number) => {
+    moveIsland(x, y)
   })
 
+  ipcMain.handle('island:set-position', (_event, x: number, y: number) => {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error('Invalid position')
+    return moveIsland(x, y)
+  })
+
+  ipcMain.handle('island:finish-drag', () => finishIslandDrag())
+  ipcMain.handle('island:get-layout', () => currentLayout())
   ipcMain.handle('island:get-bounds', () => mainWindow?.getBounds() ?? null)
 
   ipcMain.handle('island:discover-agents', async () => {
@@ -162,15 +259,21 @@ function registerIpc(): void {
     if (!request || !isAgentId(request.agentId) || typeof request.data !== 'string') {
       return { ok: false, error: 'Invalid write request' }
     }
-    if (request.data.length > MAX_PTY_WRITE_CHARS) return { ok: false, error: 'Write payload too large' }
+    if (request.data.length > MAX_PTY_WRITE_CHARS) {
+      return { ok: false, error: 'Write payload too large' }
+    }
     return ptyManager.write(request.agentId, request.data)
   })
   ipcMain.handle('pty:resize', (_event, request: PtyResizeRequest) => {
-    if (!request || !isAgentId(request.agentId)) return { ok: false, error: 'Invalid resize request' }
+    if (!request || !isAgentId(request.agentId)) {
+      return { ok: false, error: 'Invalid resize request' }
+    }
     return ptyManager.resize(request.agentId, request.cols, request.rows)
   })
   ipcMain.handle('pty:stop', async (_event, request: PtyStopRequest) => {
-    if (!request || !isAgentId(request.agentId)) return { ok: false, error: 'Invalid stop request' }
+    if (!request || !isAgentId(request.agentId)) {
+      return { ok: false, error: 'Invalid stop request' }
+    }
     return ptyManager.stop(request.agentId, Boolean(request.force))
   })
   ipcMain.handle('pty:list', () => ptyManager.list())
@@ -202,6 +305,8 @@ function registerIpc(): void {
 
 function wireBridgeEvents(): void {
   bridgeWatcher.on('raised', (request) => {
+    mainWindow?.showInactive()
+    mainWindow?.moveTop()
     mainWindow?.webContents.send('island:approval', request)
   })
   bridgeWatcher.on('cleared', (request) => {

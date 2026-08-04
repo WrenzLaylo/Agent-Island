@@ -35,11 +35,13 @@ Then **start a new Hermes session** (plugin loads at session start).
 
 ## UX
 
-- Collapsed pill at top of screen
-- **Drag** using the left grip handle
-- **Click** pill to open status
-- **Hover 1 second** to open status (not instant)
-- Badge pulses when confirmation is waiting
+- Glassy Dynamic Island-style pill that floats above your desktop
+- **Drag anywhere on the pill or header** to reposition it
+- Drop it against the **left or right edge** to morph it into a compact orb
+- **Click** or hover briefly to open the live bridge status
+- Approval requests automatically expand the island, bring it forward, and trigger an amber attention glow
+- Approve or deny directly from the expanded island
+- Framer Motion powers the morphing, spring transitions, and approval feedback
 - No embedded terminal / no second AI
 
 ## Claude / Codex
