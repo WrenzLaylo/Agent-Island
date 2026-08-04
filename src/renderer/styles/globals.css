@@ -1,19 +1,21 @@
 :root {
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI Variable", "Segoe UI", sans-serif;
   color-scheme: dark;
-  --surface: rgba(8, 8, 10, 0.9);
-  --surface-strong: rgba(7, 7, 9, 0.96);
+  --surface: rgba(10, 11, 14, 0.9);
+  --surface-strong: rgba(8, 9, 12, 0.97);
   --panel: rgba(255, 255, 255, 0.055);
-  --panel-hover: rgba(255, 255, 255, 0.085);
-  --line: rgba(255, 255, 255, 0.11);
-  --line-soft: rgba(255, 255, 255, 0.065);
-  --text: rgba(255, 255, 255, 0.96);
+  --panel-hover: rgba(255, 255, 255, 0.09);
+  --line: rgba(255, 255, 255, 0.14);
+  --line-soft: rgba(255, 255, 255, 0.07);
+  --text: rgba(255, 255, 255, 0.97);
   --secondary: rgba(255, 255, 255, 0.62);
   --tertiary: rgba(255, 255, 255, 0.38);
   --blue: #6ba9ff;
   --amber: #ffb84d;
   --green: #4bd69b;
   --red: #ff6f7f;
+  --spring-ease: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --settle-ease: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 * {
@@ -70,6 +72,15 @@ button:focus-visible {
 .island-frame {
   min-width: 0;
   min-height: 0;
+  transform: scale(1);
+  transition: transform 260ms var(--spring-ease);
+  will-change: transform;
+}
+
+/* Picked up: a gentle lift, like an iOS icon under your thumb. Snaps back
+   the instant the drag ends via the same spring easing. */
+.stage.is-dragging .island-frame {
+  transform: scale(1.045);
 }
 
 .island-surface {
@@ -80,18 +91,32 @@ button:focus-visible {
   isolation: isolate;
   color: var(--text);
   border: 1px solid var(--line);
+  /* Faked glass: this alone reads as frosted glass at rest, and unlike
+     backdrop-filter it never depends on the OS compositor feeding real
+     pixels through a transparent window (the cause of the solid box that
+     used to show up behind the pill on Windows). True blur is layered on
+     top below, only where the platform can actually support it. */
   background:
-    radial-gradient(90% 130% at 12% -35%, rgba(255, 255, 255, 0.13), transparent 54%),
-    radial-gradient(72% 110% at 96% 115%, rgba(80, 120, 255, 0.07), transparent 60%),
-    linear-gradient(160deg, rgba(20, 20, 24, 0.94), var(--surface-strong) 64%);
+    radial-gradient(115% 160% at 14% -45%, rgba(255, 255, 255, 0.17), transparent 52%),
+    radial-gradient(80% 120% at 100% 120%, rgba(90, 130, 255, 0.1), transparent 62%),
+    linear-gradient(165deg, rgba(32, 33, 39, 0.95) 0%, rgba(15, 15, 19, 0.96) 45%, var(--surface-strong) 100%);
   box-shadow:
-    0 12px 34px rgba(0, 0, 0, 0.46),
-    0 2px 8px rgba(0, 0, 0, 0.4),
-    inset 0 1px 0 rgba(255, 255, 255, 0.11),
-    inset 0 -1px 0 rgba(255, 255, 255, 0.025);
-  backdrop-filter: blur(24px) saturate(140%);
-  -webkit-backdrop-filter: blur(24px) saturate(140%);
+    0 16px 38px rgba(0, 0, 0, 0.48),
+    0 3px 10px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.03),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.03);
   transform-origin: center;
+  transition: box-shadow 260ms var(--spring-ease);
+}
+
+/* Real desktop blur only where the compositor actually supports a
+   transparent, frameless window (macOS + vibrancy). On Windows/Linux this
+   combination is unreliable and can render as an opaque box instead of
+   glass, so those platforms rely on the gradient recipe above instead. */
+[data-platform="darwin"] .island-surface {
+  backdrop-filter: blur(24px) saturate(150%);
+  -webkit-backdrop-filter: blur(24px) saturate(150%);
 }
 
 .island-surface::before {
@@ -104,8 +129,25 @@ button:focus-visible {
   height: 32%;
   border-radius: 999px;
   pointer-events: none;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.075), transparent);
-  opacity: 0.8;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.09), transparent);
+  opacity: 0.85;
+}
+
+/* Subtle grain so the glass reads as frosted material rather than a flat
+   gradient — this is what actually sells "glassy like iPhone" once real
+   blur isn't in the picture. Self-contained SVG noise, no external assets.
+   z-index -1 keeps it behind the header/status text, same stacking as the
+   sheen above. */
+.island-surface::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0.05;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 180px 180px;
 }
 
 .compact-island,
@@ -189,6 +231,13 @@ button:focus-visible {
   color: inherit;
   background: transparent;
   cursor: grab;
+  transform: scale(1);
+  transition: transform 160ms var(--settle-ease);
+}
+
+.compact-button:active,
+.dock-button:active {
+  transform: scale(0.975);
 }
 
 .compact-button:active,

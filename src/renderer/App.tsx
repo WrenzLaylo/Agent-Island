@@ -16,6 +16,7 @@ import {
 } from '@shared/island-machine'
 import { canApproveRequest } from '@shared/approval-guard'
 import { IslandShell } from './components/IslandShell'
+import { animateSpring } from './utils/spring'
 
 const HOVER_OPEN_MS = 900
 
@@ -51,6 +52,17 @@ interface DragState {
   originX: number
   originY: number
   moved: boolean
+  lastX: number
+  lastY: number
+  lastTime: number
+  velocityX: number
+  velocityY: number
+}
+
+const MAX_RELEASE_VELOCITY = 1600
+
+function clampVelocity(value: number): number {
+  return Math.min(Math.max(value, -MAX_RELEASE_VELOCITY), MAX_RELEASE_VELOCITY)
 }
 
 export function App() {
@@ -58,11 +70,15 @@ export function App() {
   const [statusNote, setStatusNote] = useState('Starting bridge…')
   const [docked, setDocked] = useState<DockSide | null>(null)
   const [attentionNonce, setAttentionNonce] = useState(0)
+  const [isDragging, setIsDragging] = useState(false)
   const dismissTimer = useRef<number | null>(null)
   const hoverTimer = useRef<number | null>(null)
   const dragRef = useRef<DragState | null>(null)
   const suppressClickRef = useRef(false)
   const pendingPointerRef = useRef<number | null>(null)
+  const pendingMoveRef = useRef<{ x: number; y: number } | null>(null)
+  const moveRafRef = useRef<number | null>(null)
+  const cancelBounceRef = useRef<(() => void) | null>(null)
 
   const dispatch = (event: IslandEvent) => {
     setState((previous) => reduceIsland(previous, event))
@@ -250,17 +266,49 @@ export function App() {
 
   // Smooth manual drag. The renderer streams movement, then Electron decides whether to dock.
   useEffect(() => {
-    const onMove = (event: PointerEvent) => {
+    const flushMove = () => {
+      moveRafRef.current = null
       const drag = dragRef.current
       const api = window.agentIsland
-      if (!drag?.active || !api?.moveWindow) return
+      const pending = pendingMoveRef.current
+      if (!drag?.active || !api?.moveWindow || !pending) return
+      api.moveWindow(pending.x, pending.y)
+    }
+
+    const scheduleMove = (x: number, y: number) => {
+      pendingMoveRef.current = { x, y }
+      if (moveRafRef.current == null) {
+        moveRafRef.current = requestAnimationFrame(flushMove)
+      }
+    }
+
+    const onMove = (event: PointerEvent) => {
+      const drag = dragRef.current
+      if (!drag?.active) return
 
       const deltaX = event.screenX - drag.startX
       const deltaY = event.screenY - drag.startY
-      if (Math.abs(deltaX) + Math.abs(deltaY) > 4) drag.moved = true
+      if (!drag.moved && Math.abs(deltaX) + Math.abs(deltaY) > 4) {
+        drag.moved = true
+        setIsDragging(true)
+      }
       if (!drag.moved) return
 
-      api.moveWindow(drag.originX + deltaX, drag.originY + deltaY)
+      const now = performance.now()
+      const dt = now - drag.lastTime
+      if (dt > 0) {
+        drag.velocityX = ((event.screenX - drag.lastX) / dt) * 1000
+        drag.velocityY = ((event.screenY - drag.lastY) / dt) * 1000
+      }
+      drag.lastX = event.screenX
+      drag.lastY = event.screenY
+      drag.lastTime = now
+
+      // One IPC hop per animation frame, not per raw pointer sample — a
+      // high-poll-rate mouse or trackpad can fire this dozens of times
+      // more often than the display can paint, and flooding the native
+      // window with setPosition calls is what made the drag feel choppy.
+      scheduleMove(drag.originX + deltaX, drag.originY + deltaY)
     }
 
     const onUp = (event: PointerEvent) => {
@@ -270,6 +318,12 @@ export function App() {
       if (!drag?.active || event.pointerId !== drag.pointerId) return
 
       drag.active = false
+      if (moveRafRef.current != null) {
+        cancelAnimationFrame(moveRafRef.current)
+        moveRafRef.current = null
+      }
+      pendingMoveRef.current = null
+
       try {
         drag.target.releasePointerCapture(drag.pointerId)
       } catch {
@@ -278,12 +332,19 @@ export function App() {
 
       if (!drag.moved || !api) {
         dragRef.current = null
+        setIsDragging(false)
         return
       }
 
       suppressClickRef.current = true
       const finalX = drag.originX + (event.screenX - drag.startX)
       const finalY = drag.originY + (event.screenY - drag.startY)
+      const originX = drag.originX
+      const originY = drag.originY
+      const releaseVelocity = {
+        x: clampVelocity(drag.velocityX),
+        y: clampVelocity(drag.velocityY)
+      }
       dragRef.current = null
 
       void (async () => {
@@ -291,7 +352,27 @@ export function App() {
           await api.setPosition(finalX, finalY)
           const layout = await api.finishDrag()
           setDocked(layout.docked)
+
+          if (!layout.docked) {
+            // Not dropped near a dock edge — spring back to where it was
+            // before this drag started, iOS-style rubber-band release.
+            await new Promise<void>((resolve) => {
+              cancelBounceRef.current?.()
+              cancelBounceRef.current = animateSpring({
+                from: { x: finalX, y: finalY },
+                to: { x: originX, y: originY },
+                velocity: releaseVelocity,
+                onUpdate: (point) => api.moveWindow?.(point.x, point.y),
+                onComplete: () => {
+                  cancelBounceRef.current = null
+                  resolve()
+                }
+              })
+            })
+            await api.setPosition(originX, originY)
+          }
         } finally {
+          setIsDragging(false)
           window.setTimeout(() => {
             suppressClickRef.current = false
           }, 0)
@@ -306,6 +387,7 @@ export function App() {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
       window.removeEventListener('pointercancel', onUp)
+      if (moveRafRef.current != null) cancelAnimationFrame(moveRafRef.current)
     }
   }, [])
 
@@ -317,6 +399,8 @@ export function App() {
       if (target.closest('[data-no-drag="true"]')) return
 
       clearHoverTimer()
+      cancelBounceRef.current?.()
+      cancelBounceRef.current = null
       pendingPointerRef.current = event.pointerId
       const api = window.agentIsland
       if (!api?.getBounds) return
@@ -337,7 +421,12 @@ export function App() {
         startY: event.screenY,
         originX: bounds.x,
         originY: bounds.y,
-        moved: false
+        moved: false,
+        lastX: event.screenX,
+        lastY: event.screenY,
+        lastTime: performance.now(),
+        velocityX: 0,
+        velocityY: 0
       }
     }
 
@@ -351,7 +440,11 @@ export function App() {
   }
 
   return (
-    <div className="stage" onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave}>
+    <div
+      className={`stage ${isDragging ? 'is-dragging' : ''}`}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+    >
       <div className="island-frame fill">
         <IslandShell
           state={state}

@@ -12,6 +12,7 @@ import type {
 } from '../shared/pty-types'
 
 export interface IslandApi {
+  platform: NodeJS.Platform
   resize: (width: number, height: number) => Promise<boolean>
   discoverAgents: () => Promise<unknown>
   getDiscovery: () => Promise<unknown>
@@ -50,6 +51,7 @@ export interface IslandApi {
 }
 
 const api: IslandApi = {
+  platform: process.platform,
   resize: (width, height) => ipcRenderer.invoke('island:resize', width, height),
   discoverAgents: () => ipcRenderer.invoke('island:discover-agents'),
   getDiscovery: () => ipcRenderer.invoke('island:get-discovery'),

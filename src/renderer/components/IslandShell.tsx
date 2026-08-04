@@ -86,7 +86,7 @@ function ActivityGlyph({ waiting = false }: { waiting?: boolean }) {
   )
 }
 
-const spring = { type: 'spring' as const, stiffness: 500, damping: 42, mass: 0.72 }
+const spring = { type: 'spring' as const, stiffness: 420, damping: 28, mass: 0.9 }
 
 export function IslandShell(props: IslandShellProps) {
   const {
