@@ -2,10 +2,22 @@ import { app, BrowserWindow, globalShortcut, ipcMain, screen } from 'electron'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { discoverAgents } from './agents/discover'
-import type { AgentDiscoveryResult } from './agents/discover'
+import type { AgentDiscoveryResult, DiscoveredAgent } from './agents/discover'
+import { PtyManager, shellHomeCwd } from './agents/process-manager'
+import type { AgentId } from '../shared/contracts'
+import {
+  isAgentId,
+  MAX_PTY_WRITE_CHARS,
+  type PtyResizeRequest,
+  type PtyStartRequest,
+  type PtyStopRequest,
+  type PtyWriteRequest,
+  validateSize
+} from '../shared/pty-types'
 
 let mainWindow: BrowserWindow | null = null
 let discoveryCache: AgentDiscoveryResult | null = null
+const ptyManager = new PtyManager({ defaultCwd: shellHomeCwd(), forceKillMs: 1500 })
 
 const isDev = !app.isPackaged
 
@@ -69,6 +81,10 @@ function resizeIsland(width: number, height: number): void {
   mainWindow.setBounds(bounds, true)
 }
 
+function agentFromDiscovery(agentId: AgentId): DiscoveredAgent | undefined {
+  return discoveryCache?.agents.find((a) => a.id === agentId)
+}
+
 function registerIpc(): void {
   ipcMain.handle('island:resize', (_event, width: number, height: number) => {
     if (
@@ -94,13 +110,64 @@ function registerIpc(): void {
 
   ipcMain.handle('island:get-discovery', () => discoveryCache)
 
-  ipcMain.handle('island:quit', () => {
+  ipcMain.handle('island:quit', async () => {
+    await ptyManager.stopAll()
     app.quit()
+  })
+
+  ipcMain.handle('pty:start', (_event, request: PtyStartRequest) => {
+    if (!request || !isAgentId(request.agentId)) {
+      return { ok: false, error: 'Invalid agentId' }
+    }
+    const sizeError = validateSize(request.cols, request.rows)
+    if (sizeError) return { ok: false, error: sizeError }
+    const agent = agentFromDiscovery(request.agentId)
+    return ptyManager.start(request.agentId, agent, request.cols, request.rows, request.cwd)
+  })
+
+  ipcMain.handle('pty:write', (_event, request: PtyWriteRequest) => {
+    if (!request || !isAgentId(request.agentId) || typeof request.data !== 'string') {
+      return { ok: false, error: 'Invalid write request' }
+    }
+    if (request.data.length > MAX_PTY_WRITE_CHARS) {
+      return { ok: false, error: 'Write payload too large' }
+    }
+    return ptyManager.write(request.agentId, request.data)
+  })
+
+  ipcMain.handle('pty:resize', (_event, request: PtyResizeRequest) => {
+    if (!request || !isAgentId(request.agentId)) {
+      return { ok: false, error: 'Invalid resize request' }
+    }
+    return ptyManager.resize(request.agentId, request.cols, request.rows)
+  })
+
+  ipcMain.handle('pty:stop', async (_event, request: PtyStopRequest) => {
+    if (!request || !isAgentId(request.agentId)) {
+      return { ok: false, error: 'Invalid stop request' }
+    }
+    return ptyManager.stop(request.agentId, Boolean(request.force))
+  })
+
+  ipcMain.handle('pty:list', () => ptyManager.list())
+  ipcMain.handle('pty:replay', (_event, agentId: unknown) => {
+    if (!isAgentId(agentId)) return ''
+    return ptyManager.getReplay(agentId)
+  })
+}
+
+function wirePtyEvents(): void {
+  ptyManager.on('data', (event) => {
+    mainWindow?.webContents.send('pty:data', event)
+  })
+  ptyManager.on('exit', (event) => {
+    mainWindow?.webContents.send('pty:exit', event)
   })
 }
 
 app.whenReady().then(async () => {
   registerIpc()
+  wirePtyEvents()
   discoveryCache = await discoverAgents()
   createWindow()
 
@@ -122,8 +189,16 @@ app.whenReady().then(async () => {
   })
 })
 
-app.on('will-quit', () => {
+let isQuitting = false
+
+app.on('before-quit', (event) => {
+  if (isQuitting) return
+  event.preventDefault()
+  isQuitting = true
   globalShortcut.unregisterAll()
+  void ptyManager.stopAll().finally(() => {
+    app.exit(0)
+  })
 })
 
 app.on('window-all-closed', () => {

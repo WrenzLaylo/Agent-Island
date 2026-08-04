@@ -4,14 +4,14 @@ Windows Dynamic-Island-style overlay for Claude Code, Codex CLI, and Hermes Agen
 
 ## Status
 
-Phase 1 vertical slice:
+Phase 2 vertical slice:
 
 - Electron frameless always-on-top island
-- Collapsed / peek / expanded / approval / success / error states
 - Claude · Codex · Hermes tabs
-- Safe approval guard + island state machine tests
-- Agent executable discovery (no real PTY yet)
-- Simulated approve/deny demo controls
+- Real ConPTY sessions via node-pty
+- xterm.js terminal in expanded mode
+- Safe approval guard + simulated approve/deny demo
+- Agent executable discovery
 
 Plan: `C:\Users\OASIS\.hermes\plans\2026-07-31_102742-agent-island.md`
 
@@ -26,6 +26,8 @@ Plan: `C:\Users\OASIS\.hermes\plans\2026-07-31_102742-agent-island.md`
 cd "C:/Users/OASIS/Downloads/agent-island"
 npm install
 npm test
+npm run smoke:pty
+npx electron scripts/smoke-hermes-pty.cjs
 npm run dev
 ```
 
@@ -36,8 +38,18 @@ npm run dev
 - `Ctrl+Alt+2` Codex
 - `Ctrl+Alt+3` Hermes
 
+## Using real terminals
+
+1. Open the island pill
+2. Select Hermes or Claude
+3. Click **Open terminal** or **Expand**
+4. Type in the xterm panel (real agent process)
+5. **Restart** kills and respawns that agent PTY
+
+Sessions stay alive when you collapse the island (process keeps running in main).
+
 ## Next
 
-1. Phase 2: node-pty + xterm.js real terminals
-2. Phase 3: Claude / Hermes / Codex adapters
-3. Phase 4: real approval bridge from CLI prompts
+1. Phase 3: stronger adapter status + multi-session UX polish
+2. Phase 4: real approval bridge from CLI prompts
+3. Installer / tray / click-through polish

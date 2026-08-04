@@ -29,7 +29,7 @@ function sizeForMode(mode: IslandSnapshot['mode'], showDemo: boolean): { width: 
     case 'approval':
       return { width: 540, height: showDemo ? 360 : 300 }
     case 'expanded':
-      return { width: 660, height: showDemo ? 490 : 430 }
+      return { width: 720, height: showDemo ? 560 : 500 }
     default:
       return { width: 300, height: 56 }
   }
@@ -49,6 +49,33 @@ export function App() {
 
   const dispatch = (event: IslandEvent) => {
     setState((prev) => reduceIsland(prev, event))
+  }
+
+  const handleSessionChange = (
+    agentId: AgentId,
+    info: import('@shared/pty-types').PtySessionInfo | null,
+    error?: string
+  ) => {
+    if (info?.alive) {
+      dispatch({
+        type: 'SET_AGENT_STATUS',
+        agentId,
+        status: 'running',
+        activityLabel: `pid ${info.pid ?? 'live'}`
+      })
+      return
+    }
+    if (error) {
+      dispatch({
+        type: 'SET_AGENT_STATUS',
+        agentId,
+        status: error.toLowerCase().includes('unavailable') || error.toLowerCase().includes('not found')
+          ? 'offline'
+          : 'error',
+        activityLabel: error.slice(0, 48),
+        lastError: error
+      })
+    }
   }
 
   const approval = currentApproval(state)
@@ -197,6 +224,7 @@ export function App() {
           onApprove={onApprove}
           onDeny={onDeny}
           onDismiss={() => dispatch({ type: 'DISMISS_TRANSIENT' })}
+          onSessionChange={handleSessionChange}
         />
       </motion.div>
 

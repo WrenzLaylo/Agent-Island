@@ -338,6 +338,33 @@ input,
   overflow: auto;
 }
 
+.terminal-body.xterm-host {
+  padding: 8px 10px 4px;
+  overflow: hidden;
+}
+
+.terminal-body.xterm-host .xterm {
+  height: 100%;
+}
+
+.terminal-body.xterm-host .xterm-viewport {
+  overflow-y: auto !important;
+}
+
+.terminal-hint {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  align-self: center;
+}
+
+.open-terminal {
+  align-self: flex-start;
+  margin-top: 4px;
+}
+
 .term-line {
   line-height: 1.5;
 }

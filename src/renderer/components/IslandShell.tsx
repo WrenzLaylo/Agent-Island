@@ -1,8 +1,10 @@
 import type { AgentId, AgentSnapshot, ApprovalRequest, IslandSnapshot } from '@shared/contracts'
 import { AGENT_ORDER } from '@shared/contracts'
+import type { PtySessionInfo } from '@shared/pty-types'
 import { AgentTabs } from './AgentTabs'
 import { ApprovalCard } from './ApprovalCard'
 import { StatusDot } from './StatusDot'
+import { TerminalPanel } from './TerminalPanel'
 
 interface IslandShellProps {
   state: IslandSnapshot
@@ -18,6 +20,7 @@ interface IslandShellProps {
   onApprove: () => void
   onDeny: () => void
   onDismiss: () => void
+  onSessionChange?: (agentId: AgentId, info: PtySessionInfo | null, error?: string) => void
 }
 
 export function IslandShell(props: IslandShellProps) {
@@ -34,7 +37,8 @@ export function IslandShell(props: IslandShellProps) {
     onCollapse,
     onApprove,
     onDeny,
-    onDismiss
+    onDismiss,
+    onSessionChange
   } = props
 
   if (state.mode === 'collapsed') {
@@ -77,25 +81,14 @@ export function IslandShell(props: IslandShellProps) {
           onDeny={onDeny}
         />
       ) : state.mode === 'expanded' ? (
-        <div className="terminal-panel">
-          <div className="terminal-meta">
-            <span>{active.label}</span>
-            <span className="muted">{active.cwd}</span>
-          </div>
-          <div className="terminal-body" aria-label="Simulated terminal">
-            <div className="term-line muted"># Phase 1 visual shell — PTY arrives in Phase 2</div>
-            <div className="term-line">$ agent-island --session {active.id}</div>
-            <div className="term-line">{active.activityLabel}</div>
-            <div className="term-line muted">{discoveryNote}</div>
-            <div className="term-line caret">▌</div>
-          </div>
-          <div className="terminal-input-row">
-            <input className="terminal-input" placeholder="Type a message… (wired in Phase 2)" disabled />
-            <button type="button" className="primary" disabled>
-              Send
-            </button>
-          </div>
-        </div>
+        <TerminalPanel
+          agentId={active.id}
+          label={active.label}
+          cwd={active.cwd}
+          available={active.available}
+          discoveryNote={discoveryNote}
+          onSessionChange={(info, error) => onSessionChange?.(active.id, info, error)}
+        />
       ) : state.mode === 'error' ? (
         <div className="status-panel error">
           <strong>Error</strong>
@@ -121,6 +114,9 @@ export function IslandShell(props: IslandShellProps) {
             </div>
           </div>
           <div className="muted tiny">{discoveryNote}</div>
+          <button type="button" className="primary open-terminal" onClick={onExpand}>
+            Open terminal
+          </button>
         </div>
       )}
     </div>
