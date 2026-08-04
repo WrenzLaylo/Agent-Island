@@ -20,19 +20,17 @@ const HOVER_OPEN_MS = 1000
 function sizeForMode(mode: IslandSnapshot['mode'], queueCount: number): { width: number; height: number } {
   switch (mode) {
     case 'collapsed':
-      return { width: queueCount > 0 ? 280 : 250, height: 52 }
+      return { width: queueCount > 0 ? 268 : 236, height: 48 }
     case 'peek':
     case 'success':
-      return { width: 420, height: 140 }
-    case 'error':
-      return { width: 420, height: 150 }
-    case 'approval':
-      return { width: 520, height: 280 }
     case 'expanded':
-      // No terminal expand — treat as peek.
-      return { width: 420, height: 140 }
+      return { width: 380, height: 120 }
+    case 'error':
+      return { width: 380, height: 128 }
+    case 'approval':
+      return { width: 440, height: 318 }
     default:
-      return { width: 250, height: 52 }
+      return { width: 236, height: 48 }
   }
 }
 

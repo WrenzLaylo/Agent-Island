@@ -19,10 +19,6 @@ interface IslandShellProps {
   onDismiss: () => void
 }
 
-/**
- * Approval-only Dynamic Island.
- * Does not host AI terminals — only surfaces confirmations from live agents.
- */
 export function IslandShell(props: IslandShellProps) {
   const {
     state,
@@ -49,12 +45,35 @@ export function IslandShell(props: IslandShellProps) {
             {queueCount > 0 ? 'APPROVAL' : active.label.toUpperCase()}
           </span>
           <span className="pill-activity">
-            {queueCount > 0
-              ? `${queueCount} waiting`
-              : active.activityLabel || 'Listening…'}
+            {queueCount > 0 ? `${queueCount} waiting` : active.activityLabel || 'Listening'}
           </span>
           {queueCount > 0 && <span className="badge pulse">{queueCount}</span>}
         </button>
+      </div>
+    )
+  }
+
+  // Approval mode: clean focused card, no noisy multi-agent chrome.
+  if (state.mode === 'approval' && approval) {
+    return (
+      <div className="pill open approval-mode" role="dialog" aria-label="Approval required">
+        <div className="pill-header approval-header">
+          <div className="drag-handle header-drag" title="Drag" aria-label="Drag island" />
+          <div className="approval-brand">
+            <StatusDot status="waiting" />
+            <span className="pill-agent">{approval.agentId.toUpperCase()}</span>
+            {queueCount > 1 && <span className="badge pulse">{queueCount}</span>}
+          </div>
+          <button type="button" className="icon-btn" onClick={onCollapse} aria-label="Collapse">
+            ✕
+          </button>
+        </div>
+        <ApprovalCard
+          approval={approval}
+          approveEnabled={approveEnabled}
+          onApprove={onApprove}
+          onDeny={onDeny}
+        />
       </div>
     )
   }
@@ -70,24 +89,17 @@ export function IslandShell(props: IslandShellProps) {
         />
         <div className="header-actions">
           {queueCount > 0 && <span className="badge pulse">{queueCount}</span>}
-          <button type="button" className="ghost" onClick={onCollapse} aria-label="Collapse">
+          <button type="button" className="icon-btn" onClick={onCollapse} aria-label="Collapse">
             −
           </button>
         </div>
       </div>
 
-      {state.mode === 'approval' && approval ? (
-        <ApprovalCard
-          approval={approval}
-          approveEnabled={approveEnabled}
-          onApprove={onApprove}
-          onDeny={onDeny}
-        />
-      ) : state.mode === 'error' ? (
+      {state.mode === 'error' ? (
         <div className="status-panel error">
           <strong>Error</strong>
           <p>{state.message ?? 'Something went wrong'}</p>
-          <button type="button" className="ghost" onClick={onDismiss}>
+          <button type="button" className="btn ghost" onClick={onDismiss}>
             Dismiss
           </button>
         </div>
@@ -97,20 +109,16 @@ export function IslandShell(props: IslandShellProps) {
             <StatusDot status={queueCount > 0 ? 'waiting' : 'idle'} />
             <div>
               <div className="status-title">
-                {queueCount > 0 ? 'Confirmation needed' : 'No pending confirmations'}
+                {queueCount > 0 ? 'Confirmation needed' : 'Listening'}
               </div>
               <div className="muted">
                 {queueCount > 0
                   ? 'An agent is waiting for your decision'
-                  : 'Connected to live Hermes sessions'}
+                  : 'Live Hermes sessions only — no separate AI here'}
               </div>
               <div className="muted tiny">{statusNote}</div>
             </div>
           </div>
-          <p className="muted tiny hud-hint">
-            This island does not run its own AI. It only shows approvals from your
-            current Hermes terminals.
-          </p>
         </div>
       )}
     </div>

@@ -47,48 +47,42 @@ function rememberWindowPosition(): void {
 }
 
 function createWindow(): void {
-  const initial = getIslandBounds(250, 52)
+  const initial = getIslandBounds(236, 48)
   const preloadPath = join(__dirname, '../preload/index.js')
   if (!existsSync(preloadPath)) {
     console.error('Missing preload script:', preloadPath)
   }
 
   mainWindow = new BrowserWindow({
-    ...initial,
-    frame: false,
-    transparent: true,
-    alwaysOnTop: true,
-    resizable: false,
-    maximizable: false,
-    minimizable: false,
-    fullscreenable: false,
-    skipTaskbar: false,
-    hasShadow: false,
-    thickFrame: false,
-    roundedCorners: true,
-    backgroundMaterial: 'none',
-    backgroundColor: '#00000000',
-    title: 'Agent Island',
-    webPreferences: {
-      preload: preloadPath,
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: false,
-      backgroundThrottling: false
-    }
-  })
+      ...initial,
+      frame: false,
+      // Solid window — Windows transparent layers paint a white/gray plate
+      // behind rounded CSS. OS roundedCorners shapes the pill instead.
+      transparent: false,
+      alwaysOnTop: true,
+      resizable: false,
+      maximizable: false,
+      minimizable: false,
+      fullscreenable: false,
+      skipTaskbar: false,
+      hasShadow: true,
+      thickFrame: false,
+      roundedCorners: true,
+      backgroundColor: '#0c0c10',
+      title: 'Agent Island',
+      webPreferences: {
+        preload: preloadPath,
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: false,
+        backgroundThrottling: false
+      }
+    })
 
-  mainWindow.setBackgroundColor('#00000000')
-  try {
-    ;(mainWindow as unknown as { setBackgroundMaterial?: (m: string) => void }).setBackgroundMaterial?.(
-      'none'
-    )
-  } catch {
-    // ignore
-  }
-  mainWindow.setAlwaysOnTop(true, 'screen-saver')
-  mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: false })
-  mainWindow.on('moved', () => rememberWindowPosition())
+    mainWindow.setBackgroundColor('#0c0c10')
+    mainWindow.setAlwaysOnTop(true, 'screen-saver')
+    mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: false })
+    mainWindow.on('moved', () => rememberWindowPosition())
 
   if (isDev && process.env.ELECTRON_RENDERER_URL) {
     mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
