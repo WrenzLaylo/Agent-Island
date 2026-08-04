@@ -1,6 +1,6 @@
 {
   "name": "agent-island",
-  "version": "0.1.1",
+  "version": "0.2.3",
   "private": true,
   "description": "Dynamic Island-style overlay for Claude, Codex, and Hermes agent sessions",
   "main": "./out/main/index.js",
@@ -21,8 +21,7 @@
     "framer-motion": "^12.23.12",
     "node-pty": "^1.1.0",
     "react": "^19.1.1",
-    "react-dom": "^19.1.1",
-    "zustand": "^5.0.8"
+    "react-dom": "^19.1.1"
   },
   "devDependencies": {
     "@electron/rebuild": "^4.2.0",

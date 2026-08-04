@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { AgentId, IslandWindowLayout } from '../shared/contracts'
+import type { AgentId, ApprovalDecision, IslandSettings, IslandWindowLayout } from '../shared/contracts'
 import type {
   PtyDataEvent,
   PtyExitEvent,
@@ -31,23 +31,30 @@ export interface IslandApi {
   ptyAnswerApproval: (request: {
     agentId: AgentId
     requestId: string
-    decision: 'approve' | 'deny'
+    decision: ApprovalDecision
   }) => Promise<{ ok: boolean; error?: string }>
   onApproval: (handler: (request: unknown) => void) => () => void
   onApprovalCleared: (handler: (request: unknown) => void) => () => void
   onApprovalAnswered: (
-    handler: (payload: { agentId: AgentId; requestId: string; decision: 'approve' | 'deny' }) => void
+    handler: (payload: { agentId: AgentId; requestId: string; decision: ApprovalDecision }) => void
   ) => () => void
   listBridgeApprovals: () => Promise<unknown>
   answerBridgeApproval: (request: {
     requestId: string
-    decision: 'approve' | 'deny'
+    decision: ApprovalDecision
   }) => Promise<{ ok: boolean; error?: string }>
   moveWindow: (x: number, y: number) => void
   setPosition: (x: number, y: number) => Promise<boolean>
   finishDrag: () => Promise<IslandWindowLayout>
+  returnHome: () => Promise<IslandWindowLayout>
   getLayout: () => Promise<IslandWindowLayout>
   getBounds: () => Promise<{ x: number; y: number; width: number; height: number } | null>
+  getSettings: () => Promise<IslandSettings>
+  updateSettings: (patch: Partial<IslandSettings>) => Promise<IslandSettings>
+  onSettingsChanged: (handler: (settings: IslandSettings) => void) => () => void
+  onOpenSettings: (handler: () => void) => () => void
+  onReturnHome: (handler: () => void) => () => void
+  onOutsideClick: (handler: () => void) => () => void
 }
 
 const api: IslandApi = {
@@ -101,7 +108,7 @@ const api: IslandApi = {
   onApprovalAnswered: (handler) => {
     const listener = (
       _event: Electron.IpcRendererEvent,
-      payload: { agentId: AgentId; requestId: string; decision: 'approve' | 'deny' }
+      payload: { agentId: AgentId; requestId: string; decision: ApprovalDecision }
     ) => handler(payload)
     ipcRenderer.on('island:approval-answered', listener)
     return () => ipcRenderer.removeListener('island:approval-answered', listener)
@@ -111,8 +118,31 @@ const api: IslandApi = {
   moveWindow: (x, y) => ipcRenderer.send('island:move-window', x, y),
   setPosition: (x, y) => ipcRenderer.invoke('island:set-position', x, y),
   finishDrag: () => ipcRenderer.invoke('island:finish-drag'),
+  returnHome: () => ipcRenderer.invoke('island:return-home'),
   getLayout: () => ipcRenderer.invoke('island:get-layout'),
-  getBounds: () => ipcRenderer.invoke('island:get-bounds')
+  getBounds: () => ipcRenderer.invoke('island:get-bounds'),
+  getSettings: () => ipcRenderer.invoke('island:get-settings'),
+  updateSettings: (patch) => ipcRenderer.invoke('island:update-settings', patch),
+  onSettingsChanged: (handler) => {
+    const listener = (_event: Electron.IpcRendererEvent, settings: IslandSettings) => handler(settings)
+    ipcRenderer.on('island:settings-changed', listener)
+    return () => ipcRenderer.removeListener('island:settings-changed', listener)
+  },
+  onOpenSettings: (handler) => {
+    const listener = () => handler()
+    ipcRenderer.on('island:open-settings', listener)
+    return () => ipcRenderer.removeListener('island:open-settings', listener)
+  },
+  onReturnHome: (handler) => {
+    const listener = () => handler()
+    ipcRenderer.on('island:return-home', listener)
+    return () => ipcRenderer.removeListener('island:return-home', listener)
+  },
+  onOutsideClick: (handler) => {
+    const listener = () => handler()
+    ipcRenderer.on('island:outside-click', listener)
+    return () => ipcRenderer.removeListener('island:outside-click', listener)
+  }
 }
 
 contextBridge.exposeInMainWorld('agentIsland', api)

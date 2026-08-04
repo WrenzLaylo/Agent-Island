@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   AGENT_ORDER,
+  DEFAULT_ISLAND_SETTINGS,
   type AgentId,
+  type ApprovalDecision,
   type ApprovalRequest,
   type DockSide,
+  type IslandSettings,
   type IslandSnapshot,
   type IslandWindowLayout
 } from '@shared/contracts'
@@ -15,31 +18,42 @@ import {
   type IslandEvent
 } from '@shared/island-machine'
 import { canApproveRequest } from '@shared/approval-guard'
-import { IslandShell } from './components/IslandShell'
-import { animateSpring } from './utils/spring'
+import type { PtyExitEvent, PtySessionInfo } from '@shared/pty-types'
+import { IslandShell, type IslandPanel } from './components/IslandShell'
 
-const HOVER_OPEN_MS = 900
+function isVisibleActivity(status: IslandSnapshot['agents'][AgentId]['status']): boolean {
+  return status === 'running' || status === 'thinking' || status === 'waiting' || status === 'completed' || status === 'error'
+}
 
-function sizeForMode(
+function sizeForPresentation(
   mode: IslandSnapshot['mode'],
   queueCount: number,
-  docked: DockSide | null
+  docked: DockSide | null,
+  approvalChoiceCount: number,
+  panel: IslandPanel,
+  quietIdle: boolean
 ): { width: number; height: number } {
-  if (mode === 'collapsed' && docked) return { width: 62, height: 62 }
+  if (panel === 'settings') return { width: 478, height: 660 }
+  if (panel === 'onboarding') return { width: 430, height: 420 }
+  if (mode === 'collapsed' && docked) return quietIdle ? { width: 48, height: 48 } : { width: 62, height: 62 }
 
   switch (mode) {
     case 'collapsed':
-      return { width: queueCount > 0 ? 340 : 318, height: 66 }
+      return quietIdle ? { width: 128, height: 48 } : { width: 318, height: 66 }
     case 'peek':
-    case 'success':
     case 'expanded':
-      return { width: 404, height: 154 }
+      return { width: 438, height: 214 }
+    case 'success':
+      return { width: 390, height: 126 }
     case 'error':
-      return { width: 404, height: 166 }
+      return { width: 414, height: 138 }
     case 'approval':
-      return { width: 440, height: 322 }
+      return {
+        width: 478,
+        height: approvalChoiceCount >= 4 ? 610 : approvalChoiceCount === 3 ? 548 : 458
+      }
     default:
-      return { width: 318, height: 66 }
+      return quietIdle ? { width: 128, height: 48 } : { width: 318, height: 66 }
   }
 }
 
@@ -52,33 +66,61 @@ interface DragState {
   originX: number
   originY: number
   moved: boolean
-  lastX: number
-  lastY: number
-  lastTime: number
-  velocityX: number
-  velocityY: number
 }
 
-const MAX_RELEASE_VELOCITY = 1600
-
-function clampVelocity(value: number): number {
-  return Math.min(Math.max(value, -MAX_RELEASE_VELOCITY), MAX_RELEASE_VELOCITY)
+function playApprovalCue(): void {
+  try {
+    const AudioContextClass = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+    if (!AudioContextClass) return
+    const context = new AudioContextClass()
+    const gain = context.createGain()
+    const oscillator = context.createOscillator()
+    oscillator.type = 'sine'
+    oscillator.frequency.setValueAtTime(520, context.currentTime)
+    oscillator.frequency.exponentialRampToValueAtTime(690, context.currentTime + 0.12)
+    gain.gain.setValueAtTime(0.0001, context.currentTime)
+    gain.gain.exponentialRampToValueAtTime(0.055, context.currentTime + 0.018)
+    gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.22)
+    oscillator.connect(gain)
+    gain.connect(context.destination)
+    oscillator.start()
+    oscillator.stop(context.currentTime + 0.24)
+    oscillator.addEventListener('ended', () => void context.close())
+  } catch {
+    // Audio is optional and may be blocked by OS policy.
+  }
 }
 
 export function App() {
   const [state, setState] = useState<IslandSnapshot>(() => createInitialIslandState())
-  const [statusNote, setStatusNote] = useState('Starting bridge…')
+  const [settings, setSettings] = useState<IslandSettings>(DEFAULT_ISLAND_SETTINGS)
+  const [settingsLoaded, setSettingsLoaded] = useState(false)
+  const [statusNote, setStatusNote] = useState('Discovering agents…')
   const [docked, setDocked] = useState<DockSide | null>(null)
   const [attentionNonce, setAttentionNonce] = useState(0)
   const [isDragging, setIsDragging] = useState(false)
+  const [isMorphing, setIsMorphing] = useState(false)
+  const [panel, setPanel] = useState<IslandPanel>(null)
+
+  const stateRef = useRef(state)
+  const settingsRef = useRef(settings)
   const dismissTimer = useRef<number | null>(null)
-  const hoverTimer = useRef<number | null>(null)
   const dragRef = useRef<DragState | null>(null)
   const suppressClickRef = useRef(false)
   const pendingPointerRef = useRef<number | null>(null)
   const pendingMoveRef = useRef<{ x: number; y: number } | null>(null)
   const moveRafRef = useRef<number | null>(null)
-  const cancelBounceRef = useRef<(() => void) | null>(null)
+  const resizeRunRef = useRef(0)
+  const soundedApprovals = useRef(new Set<string>())
+  const completionTimers = useRef<Partial<Record<AgentId, number>>>({})
+
+  useEffect(() => {
+    stateRef.current = state
+  }, [state])
+
+  useEffect(() => {
+    settingsRef.current = settings
+  }, [settings])
 
   const dispatch = (event: IslandEvent) => {
     setState((previous) => reduceIsland(previous, event))
@@ -86,78 +128,137 @@ export function App() {
 
   const approval = currentApproval(state)
   const queueCount = pendingApprovalCount(state)
-  const active = state.agents[state.activeAgentId]
+  const selectedActive = state.agents[state.activeAgentId]
+  const activityAgent = isVisibleActivity(selectedActive.status)
+    ? selectedActive
+    : AGENT_ORDER.map((id) => state.agents[id]).find((agent) => isVisibleActivity(agent.status))
+  const active =
+    state.mode === 'collapsed' && panel === null && queueCount === 0 && activityAgent
+      ? activityAgent
+      : selectedActive
+  const quietIdle =
+    settings.quietIdle &&
+    state.mode === 'collapsed' &&
+    panel === null &&
+    queueCount === 0 &&
+    !activityAgent
   const size = useMemo(
-    () => sizeForMode(state.mode, queueCount, docked),
-    [state.mode, queueCount, docked]
+    () => sizeForPresentation(state.mode, queueCount, docked, approval?.choices?.length ?? 2, panel, quietIdle),
+    [state.mode, queueCount, docked, approval?.choices?.length, panel, quietIdle]
   )
 
   useEffect(() => {
     const api = window.agentIsland
     if (!api) {
-      setStatusNote('Bridge offline — reload app')
+      setStatusNote('Bridge offline — reload Agent Island')
       return
     }
 
-    void api.getLayout?.().then((layout: IslandWindowLayout) => {
-      setDocked(layout.docked)
+    let disposed = false
+
+    void api.getSettings().then((loaded: IslandSettings) => {
+      if (disposed) return
+      setSettings(loaded)
+      settingsRef.current = loaded
+      setSettingsLoaded(true)
+      if (loaded.rememberLastAgent) {
+        dispatch({ type: 'SELECT_AGENT', agentId: loaded.lastAgentId, open: false })
+      }
+      if (!loaded.onboardingComplete) setPanel('onboarding')
     })
 
-    // Mark Hermes as the listening target (no local PTY).
-    for (const id of AGENT_ORDER) {
-      dispatch({
-        type: 'SET_AGENT_STATUS',
-        agentId: id,
-        status: id === 'hermes' ? 'idle' : 'offline',
-        activityLabel: id === 'hermes' ? 'Bridge ready' : 'Not connected',
-        available: id === 'hermes',
-        integrationMode: id === 'hermes' ? 'structured' : 'unavailable'
-      })
-    }
+    void api.getLayout().then((layout: IslandWindowLayout) => {
+      if (!disposed) setDocked(layout.docked)
+    })
 
-    void api.discoverAgents?.().then((result: unknown) => {
-      const data = result as { agents?: Array<{ id: AgentId; available: boolean; version?: string }> }
-      const hermes = data.agents?.find((agent) => agent.id === 'hermes')
-      if (hermes?.available) {
-        setStatusNote(`Hermes bridge active${hermes.version ? ` · ${hermes.version}` : ''}`)
+    const applyDiscovery = (result: unknown) => {
+      const data = result as {
+        agents?: Array<{
+          id: AgentId
+          available: boolean
+          version?: string
+          integrationMode?: IslandSnapshot['agents'][AgentId]['integrationMode']
+        }>
+      }
+      const discovered = data.agents ?? []
+      const availableNames: string[] = []
+      for (const id of AGENT_ORDER) {
+        const item = discovered.find((agent) => agent.id === id)
+        const available = Boolean(item?.available)
+        if (available) availableNames.push(stateRef.current.agents[id].label)
         dispatch({
           type: 'SET_AGENT_STATUS',
-          agentId: 'hermes',
-          status: 'idle',
-          activityLabel: 'Listening',
-          available: true,
-          integrationMode: 'structured'
+          agentId: id,
+          status: available ? 'idle' : 'offline',
+          activityLabel: available
+            ? id === 'hermes'
+              ? 'Listening for approvals'
+              : 'Installed and ready'
+            : 'Not detected',
+          available,
+          integrationMode:
+            id === 'hermes' && available ? 'structured' : item?.integrationMode ?? 'unavailable',
+          version: item?.version
         })
-      } else {
-        setStatusNote('Hermes not found — install or sign in to activate the bridge')
       }
-    })
+      setStatusNote(
+        availableNames.length
+          ? `${availableNames.join(', ')} detected`
+          : 'No supported agents were detected'
+      )
 
-    const enqueueApproval = (request: ApprovalRequest) => {
-      if (!request?.id || !request.agentId) return
-      setAttentionNonce((value) => value + 1)
-      dispatch({ type: 'ENQUEUE_APPROVAL', request })
+      const currentAgent = stateRef.current.activeAgentId
+      const currentAvailable = discovered.find((agent) => agent.id === currentAgent)?.available
+      const firstAvailable = AGENT_ORDER.find((id) => discovered.some((agent) => agent.id === id && agent.available))
+      if (!currentAvailable && firstAvailable && stateRef.current.approvalQueue.length === 0) {
+        dispatch({ type: 'SELECT_AGENT', agentId: firstAvailable, open: false })
+        if (settingsRef.current.rememberLastAgent) {
+          void api.updateSettings({ lastAgentId: firstAvailable })
+        }
+      }
     }
 
-    const offApproval = api.onApproval?.((request: unknown) => {
-      enqueueApproval(request as ApprovalRequest)
-    })
+    void api.discoverAgents().then(applyDiscovery)
 
-    const offApprovalCleared = api.onApprovalCleared?.((request: unknown) => {
+    const enqueueApproval = (request: ApprovalRequest, playSound = true) => {
+      if (!request?.id || !request.agentId) return
+      if (settingsRef.current.autoExpandApprovals) setPanel(null)
+      setAttentionNonce((value) => value + 1)
+      dispatch({
+        type: 'ENQUEUE_APPROVAL',
+        request,
+        autoExpand: settingsRef.current.autoExpandApprovals
+      })
+      if (
+        playSound &&
+        settingsRef.current.approvalSounds &&
+        !soundedApprovals.current.has(request.id)
+      ) {
+        soundedApprovals.current.add(request.id)
+        playApprovalCue()
+      }
+    }
+
+    const offApproval = api.onApproval((request: unknown) => enqueueApproval(request as ApprovalRequest))
+
+    const offApprovalCleared = api.onApprovalCleared((request: unknown) => {
       const cleared = request as ApprovalRequest
       if (!cleared?.id) return
-      setState((previous) => {
-        const existing = previous.approvals[cleared.id]
-        if (!existing || existing.answered) return previous
-        return reduceIsland(previous, {
-          type: 'ANSWER_APPROVAL',
-          requestId: cleared.id,
-          decision: 'deny'
-        })
+      const message = !cleared.processAlive
+        ? 'The agent closed before this request was answered.'
+        : cleared.superseded
+          ? 'The command changed or the approval was handled elsewhere.'
+          : 'The approval request is no longer active.'
+      dispatch({
+        type: 'INVALIDATE_APPROVAL',
+        requestId: cleared.id,
+        message,
+        kind: 'cancelled'
       })
     })
 
-    const offToggle = api.onToggle?.(() => {
+    const offToggle = api.onToggle(() => {
+      setPanel(null)
       setState((previous) =>
         reduceIsland(previous, {
           type: previous.mode === 'collapsed' ? 'CLICK_PILL' : 'COLLAPSE'
@@ -165,127 +266,214 @@ export function App() {
       )
     })
 
-    // Pull any already-pending bridge items.
-    void api.listBridgeApprovals?.().then((items: unknown) => {
+    const offSelectAgent = api.onSelectAgent((agentId: AgentId) => {
+      setPanel(null)
+      dispatch({ type: 'SELECT_AGENT', agentId })
+    })
+
+    const offSettings = api.onSettingsChanged((next: IslandSettings) => {
+      setSettings(next)
+      settingsRef.current = next
+    })
+
+    const offOpenSettings = api.onOpenSettings(() => {
+      setPanel('settings')
+      dispatch({ type: 'EXPAND' })
+    })
+
+    const offReturnHome = api.onReturnHome(() => {
+      setDocked(null)
+      setPanel(null)
+      dispatch({ type: 'COLLAPSE' })
+    })
+
+    const offOutsideClick = api.onOutsideClick(() => {
+      if (dragRef.current?.active) return
+      setPanel(null)
+      dispatch({ type: 'COLLAPSE' })
+    })
+
+    const offPtySession = api.onPtySession((session: PtySessionInfo) => {
+      if (session.alive && stateRef.current.approvalQueue.length === 0) {
+        dispatch({ type: 'SELECT_AGENT', agentId: session.agentId, open: false })
+      }
+      dispatch({
+        type: 'SET_AGENT_STATUS',
+        agentId: session.agentId,
+        status: session.alive ? 'running' : 'idle',
+        activityLabel: session.alive ? 'Session running' : 'Ready',
+        available: true
+      })
+    })
+
+    const offPtyExit = api.onPtyExit((event: PtyExitEvent) => {
+      const previousTimer = completionTimers.current[event.agentId]
+      if (previousTimer) window.clearTimeout(previousTimer)
+
+      dispatch({
+        type: 'SET_AGENT_STATUS',
+        agentId: event.agentId,
+        status: event.exitCode === 0 ? 'completed' : 'error',
+        activityLabel: event.exitCode === 0 ? 'Session completed' : `Session exited with code ${event.exitCode}`,
+        lastError: event.exitCode === 0 ? undefined : `Exit code ${event.exitCode}`
+      })
+
+      if (event.exitCode === 0) {
+        completionTimers.current[event.agentId] = window.setTimeout(() => {
+          const agent = stateRef.current.agents[event.agentId]
+          if (agent.status !== 'completed' || agent.pendingApprovalIds.length > 0) return
+          dispatch({
+            type: 'SET_AGENT_STATUS',
+            agentId: event.agentId,
+            status: 'idle',
+            activityLabel: 'Ready',
+            available: true
+          })
+          delete completionTimers.current[event.agentId]
+        }, 2200)
+      }
+    })
+
+    void api.listBridgeApprovals().then((items: unknown) => {
       const list = items as ApprovalRequest[]
       if (!Array.isArray(list)) return
-      for (const request of list) enqueueApproval(request)
+      for (const request of list) enqueueApproval(request, false)
     })
 
     return () => {
-      offApproval?.()
-      offApprovalCleared?.()
-      offToggle?.()
-      if (hoverTimer.current) window.clearTimeout(hoverTimer.current)
+      disposed = true
+      offApproval()
+      offApprovalCleared()
+      offToggle()
+      offSelectAgent()
+      offSettings()
+      offOpenSettings()
+      offReturnHome()
+      offOutsideClick()
+      offPtySession()
+      offPtyExit()
+      for (const timer of Object.values(completionTimers.current)) {
+        if (timer) window.clearTimeout(timer)
+      }
     }
   }, [])
 
   useEffect(() => {
+    if (!settingsLoaded) return
     const api = window.agentIsland
     if (!api) return
-    void api.resize(size.width, size.height)
-  }, [size.width, size.height])
+    const run = ++resizeRunRef.current
+    setIsMorphing(true)
+    void api.resize(size.width, size.height).finally(() => {
+      if (resizeRunRef.current === run) setIsMorphing(false)
+    })
+  }, [size.width, size.height, settingsLoaded])
 
   useEffect(() => {
     if (state.mode !== 'success' && state.mode !== 'error') return
-    if (state.hovered || state.focused) return
+    if (state.approvalQueue.length > 0) return
     if (dismissTimer.current) window.clearTimeout(dismissTimer.current)
-    dismissTimer.current = window.setTimeout(() => {
-      dispatch({ type: 'DISMISS_TRANSIENT' })
-    }, 1800)
+    const delay = state.mode === 'success' ? settings.autoCollapseMs : Math.max(1500, settings.autoCollapseMs)
+    dismissTimer.current = window.setTimeout(() => dispatch({ type: 'DISMISS_TRANSIENT' }), delay)
     return () => {
       if (dismissTimer.current) window.clearTimeout(dismissTimer.current)
     }
-  }, [state.mode, state.hovered, state.focused, state.message])
+  }, [state.mode, state.message, state.approvalQueue.length, settings.autoCollapseMs])
 
-  // A real approval always overrides compact mode and expands automatically.
   useEffect(() => {
-    if (queueCount > 0 && state.mode === 'collapsed') {
-      dispatch({ type: 'EXPAND' })
-    }
-  }, [queueCount, state.mode])
+    const timer = window.setInterval(() => {
+      const snapshot = stateRef.current
+      const now = Date.now()
+      for (const requestId of snapshot.approvalQueue) {
+        const request = snapshot.approvals[requestId]
+        if (request && !request.answered && now > request.expiresAt) {
+          dispatch({
+            type: 'INVALIDATE_APPROVAL',
+            requestId,
+            message: 'This approval expired before a decision was made.',
+            kind: 'expired'
+          })
+          break
+        }
+      }
+    }, 1000)
+    return () => window.clearInterval(timer)
+  }, [])
 
   const approveEnabled = approval
     ? canApproveRequest({ request: approval, displayedRequestId: approval.id }).canApprove
     : false
 
-  const onApprove = async () => {
-    if (!approval) return
+  const onDecision = async (decision: ApprovalDecision) => {
+    if (!approval || isMorphing) return
     const api = window.agentIsland
-    if (approval.source === 'hermes-terminal' && api?.answerBridgeApproval) {
-      const result = await api.answerBridgeApproval({
+    if (approval.source === 'hermes-bridge' && api?.answerBridgeApproval) {
+      const result = await api.answerBridgeApproval({ requestId: approval.id, decision })
+      if (!result.ok) {
+        dispatch({ type: 'SET_ERROR', message: result.error ?? 'The decision could not be written.' })
+        return
+      }
+    } else if (approval.source === 'hermes-terminal' && api?.ptyAnswerApproval) {
+      const result = await api.ptyAnswerApproval({
+        agentId: approval.agentId,
         requestId: approval.id,
-        decision: 'approve'
+        decision
       })
       if (!result.ok) {
-        dispatch({ type: 'SET_ERROR', message: result.error ?? 'Approve failed' })
+        dispatch({ type: 'SET_ERROR', message: result.error ?? 'The agent no longer accepts this decision.' })
         return
       }
     }
-    dispatch({ type: 'ANSWER_APPROVAL', requestId: approval.id, decision: 'approve' })
+    dispatch({ type: 'ANSWER_APPROVAL', requestId: approval.id, decision })
   }
 
-  const onDeny = async () => {
-    if (!approval) return
-    const api = window.agentIsland
-    if (approval.source === 'hermes-terminal' && api?.answerBridgeApproval) {
-      const result = await api.answerBridgeApproval({
-        requestId: approval.id,
-        decision: 'deny'
-      })
-      if (!result.ok) {
-        dispatch({ type: 'SET_ERROR', message: result.error ?? 'Deny failed' })
-        return
-      }
-    }
-    dispatch({ type: 'ANSWER_APPROVAL', requestId: approval.id, decision: 'deny' })
+  const updateAppSettings = (patch: Partial<IslandSettings>) => {
+    const optimistic = { ...settingsRef.current, ...patch }
+    setSettings(optimistic)
+    settingsRef.current = optimistic
+    void window.agentIsland.updateSettings(patch).then((saved: IslandSettings) => {
+      setSettings(saved)
+      settingsRef.current = saved
+    })
   }
 
-  const clearHoverTimer = () => {
-    if (hoverTimer.current) {
-      window.clearTimeout(hoverTimer.current)
-      hoverTimer.current = null
-    }
+  const selectAgent = (agentId: AgentId) => {
+    dispatch({ type: 'SELECT_AGENT', agentId })
+    if (settingsRef.current.rememberLastAgent) updateAppSettings({ lastAgentId: agentId })
+  }
+
+  const completeOnboarding = () => {
+    updateAppSettings({ onboardingComplete: true })
+    setPanel(null)
+    dispatch({ type: 'COLLAPSE' })
   }
 
   const onMouseEnter = () => {
     dispatch({ type: 'HOVER_ENTER' })
-    clearHoverTimer()
-    if (state.mode === 'collapsed' && !dragRef.current?.active) {
-      hoverTimer.current = window.setTimeout(() => {
-        dispatch({ type: 'HOVER_OPEN' })
-      }, HOVER_OPEN_MS)
-    }
   }
 
   const onMouseLeave = () => {
     if (dragRef.current?.active) return
-    clearHoverTimer()
     dispatch({ type: 'HOVER_LEAVE' })
   }
 
-  // Smooth manual drag. The renderer streams movement, then Electron decides whether to dock.
   useEffect(() => {
     const flushMove = () => {
       moveRafRef.current = null
       const drag = dragRef.current
-      const api = window.agentIsland
       const pending = pendingMoveRef.current
-      if (!drag?.active || !api?.moveWindow || !pending) return
-      api.moveWindow(pending.x, pending.y)
+      if (!drag?.active || !pending) return
+      window.agentIsland.moveWindow(pending.x, pending.y)
     }
 
     const scheduleMove = (x: number, y: number) => {
       pendingMoveRef.current = { x, y }
-      if (moveRafRef.current == null) {
-        moveRafRef.current = requestAnimationFrame(flushMove)
-      }
+      if (moveRafRef.current == null) moveRafRef.current = requestAnimationFrame(flushMove)
     }
 
     const onMove = (event: PointerEvent) => {
       const drag = dragRef.current
       if (!drag?.active) return
-
       const deltaX = event.screenX - drag.startX
       const deltaY = event.screenY - drag.startY
       if (!drag.moved && Math.abs(deltaX) + Math.abs(deltaY) > 4) {
@@ -293,44 +481,24 @@ export function App() {
         setIsDragging(true)
       }
       if (!drag.moved) return
-
-      const now = performance.now()
-      const dt = now - drag.lastTime
-      if (dt > 0) {
-        drag.velocityX = ((event.screenX - drag.lastX) / dt) * 1000
-        drag.velocityY = ((event.screenY - drag.lastY) / dt) * 1000
-      }
-      drag.lastX = event.screenX
-      drag.lastY = event.screenY
-      drag.lastTime = now
-
-      // One IPC hop per animation frame, not per raw pointer sample — a
-      // high-poll-rate mouse or trackpad can fire this dozens of times
-      // more often than the display can paint, and flooding the native
-      // window with setPosition calls is what made the drag feel choppy.
       scheduleMove(drag.originX + deltaX, drag.originY + deltaY)
     }
 
     const onUp = (event: PointerEvent) => {
       if (pendingPointerRef.current === event.pointerId) pendingPointerRef.current = null
       const drag = dragRef.current
-      const api = window.agentIsland
       if (!drag?.active || event.pointerId !== drag.pointerId) return
-
       drag.active = false
-      if (moveRafRef.current != null) {
-        cancelAnimationFrame(moveRafRef.current)
-        moveRafRef.current = null
-      }
+      if (moveRafRef.current != null) cancelAnimationFrame(moveRafRef.current)
+      moveRafRef.current = null
       pendingMoveRef.current = null
-
       try {
         drag.target.releasePointerCapture(drag.pointerId)
       } catch {
-        // Pointer capture may already be released when the OS changes displays.
+        // Capture can already be released when moving between displays.
       }
 
-      if (!drag.moved || !api) {
+      if (!drag.moved) {
         dragRef.current = null
         setIsDragging(false)
         return
@@ -339,38 +507,13 @@ export function App() {
       suppressClickRef.current = true
       const finalX = drag.originX + (event.screenX - drag.startX)
       const finalY = drag.originY + (event.screenY - drag.startY)
-      const originX = drag.originX
-      const originY = drag.originY
-      const releaseVelocity = {
-        x: clampVelocity(drag.velocityX),
-        y: clampVelocity(drag.velocityY)
-      }
       dragRef.current = null
 
       void (async () => {
         try {
-          await api.setPosition(finalX, finalY)
-          const layout = await api.finishDrag()
+          await window.agentIsland.setPosition(finalX, finalY)
+          const layout = await window.agentIsland.finishDrag()
           setDocked(layout.docked)
-
-          if (!layout.docked) {
-            // Not dropped near a dock edge — spring back to where it was
-            // before this drag started, iOS-style rubber-band release.
-            await new Promise<void>((resolve) => {
-              cancelBounceRef.current?.()
-              cancelBounceRef.current = animateSpring({
-                from: { x: finalX, y: finalY },
-                to: { x: originX, y: originY },
-                velocity: releaseVelocity,
-                onUpdate: (point) => api.moveWindow?.(point.x, point.y),
-                onComplete: () => {
-                  cancelBounceRef.current = null
-                  resolve()
-                }
-              })
-            })
-            await api.setPosition(originX, originY)
-          }
         } finally {
           setIsDragging(false)
           window.setTimeout(() => {
@@ -398,19 +541,14 @@ export function App() {
       if (!target?.closest?.('[data-drag-region="true"]')) return
       if (target.closest('[data-no-drag="true"]')) return
 
-      clearHoverTimer()
-      cancelBounceRef.current?.()
-      cancelBounceRef.current = null
       pendingPointerRef.current = event.pointerId
-      const api = window.agentIsland
-      if (!api?.getBounds) return
-      const bounds = await api.getBounds()
+      const bounds = await window.agentIsland.getBounds()
       if (!bounds || pendingPointerRef.current !== event.pointerId) return
 
       try {
         target.setPointerCapture(event.pointerId)
       } catch {
-        // Capture is best-effort; window movement still works without it.
+        // Pointer capture is best effort.
       }
 
       dragRef.current = {
@@ -421,12 +559,7 @@ export function App() {
         startY: event.screenY,
         originX: bounds.x,
         originY: bounds.y,
-        moved: false,
-        lastX: event.screenX,
-        lastY: event.screenY,
-        lastTime: performance.now(),
-        velocityX: 0,
-        velocityY: 0
+        moved: false
       }
     }
 
@@ -436,12 +569,25 @@ export function App() {
 
   const onClickPill = () => {
     if (suppressClickRef.current) return
+    setPanel(null)
+    if (active.id !== stateRef.current.activeAgentId) {
+      dispatch({ type: 'SELECT_AGENT', agentId: active.id, open: false })
+    }
     dispatch({ type: 'CLICK_PILL' })
+  }
+
+  const returnHome = async () => {
+    const layout = await window.agentIsland.returnHome()
+    setDocked(layout.docked)
+    setPanel(null)
+    dispatch({ type: 'COLLAPSE' })
   }
 
   return (
     <div
       className={`stage ${isDragging ? 'is-dragging' : ''}`}
+      data-reduced-motion={settings.reducedMotion ? 'true' : 'false'}
+      data-platform={window.agentIsland?.platform ?? 'unknown'}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
     >
@@ -455,12 +601,23 @@ export function App() {
           statusNote={statusNote}
           docked={docked}
           attentionNonce={attentionNonce}
-          onSelectAgent={(agentId) => dispatch({ type: 'SELECT_AGENT', agentId })}
+          panel={panel}
+          settings={settings}
+          isMorphing={isMorphing}
+          quietIdle={quietIdle}
+          onSelectAgent={selectAgent}
           onClickPill={onClickPill}
-          onCollapse={() => dispatch({ type: 'COLLAPSE' })}
-          onApprove={() => void onApprove()}
-          onDeny={() => void onDeny()}
+          onCollapse={() => {
+            setPanel(null)
+            dispatch({ type: 'COLLAPSE' })
+          }}
+          onDecision={(decision) => void onDecision(decision)}
           onDismiss={() => dispatch({ type: 'DISMISS_TRANSIENT' })}
+          onOpenSettings={() => setPanel('settings')}
+          onClosePanel={() => setPanel(null)}
+          onSettingsChange={updateAppSettings}
+          onCompleteOnboarding={completeOnboarding}
+          onReturnHome={() => void returnHome()}
         />
       </div>
     </div>
