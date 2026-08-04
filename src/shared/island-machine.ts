@@ -19,7 +19,7 @@ export type IslandEvent =
   | { type: 'SELECT_AGENT'; agentId: AgentId }
   | { type: 'EXPAND' }
   | { type: 'COLLAPSE' }
-  | { type: 'SET_AGENT_STATUS'; agentId: AgentId; status: AgentStatus; activityLabel?: string; lastError?: string }
+  | { type: 'SET_AGENT_STATUS'; agentId: AgentId; status: AgentStatus; activityLabel?: string; lastError?: string; available?: boolean; integrationMode?: import('./contracts').IntegrationMode }
   | { type: 'ENQUEUE_APPROVAL'; request: ApprovalRequest }
   | { type: 'ANSWER_APPROVAL'; requestId: string; decision: 'approve' | 'deny' }
   | { type: 'COMPLETE'; message?: string }
@@ -112,7 +112,8 @@ export function reduceIsland(state: IslandSnapshot, event: IslandEvent): IslandS
           status: event.status,
           activityLabel: event.activityLabel ?? agent.activityLabel,
           lastError: event.lastError,
-          available: event.status !== 'offline'
+          available: event.available ?? event.status !== 'offline',
+          integrationMode: event.integrationMode ?? agent.integrationMode
         })
       }
     }

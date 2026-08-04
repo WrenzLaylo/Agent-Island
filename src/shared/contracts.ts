@@ -78,11 +78,11 @@ export function createDefaultAgents(cwd = ''): Record<AgentId, AgentSnapshot> {
     claude: {
       id: 'claude',
       label: 'Claude',
-      status: 'idle',
-      integrationMode: 'simulated',
-      activityLabel: 'Ready',
+      status: 'offline',
+      integrationMode: 'unavailable',
+      activityLabel: 'Checking…',
       cwd,
-      available: true,
+      available: false,
       pendingApprovalIds: []
     },
     codex: {
@@ -90,7 +90,7 @@ export function createDefaultAgents(cwd = ''): Record<AgentId, AgentSnapshot> {
       label: 'Codex',
       status: 'offline',
       integrationMode: 'unavailable',
-      activityLabel: 'Not found',
+      activityLabel: 'Checking…',
       cwd,
       available: false,
       pendingApprovalIds: []
@@ -98,11 +98,11 @@ export function createDefaultAgents(cwd = ''): Record<AgentId, AgentSnapshot> {
     hermes: {
       id: 'hermes',
       label: 'Hermes',
-      status: 'idle',
-      integrationMode: 'simulated',
-      activityLabel: 'Ready',
+      status: 'offline',
+      integrationMode: 'unavailable',
+      activityLabel: 'Checking…',
       cwd,
-      available: true,
+      available: false,
       pendingApprovalIds: []
     }
   }

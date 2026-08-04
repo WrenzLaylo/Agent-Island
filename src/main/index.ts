@@ -163,6 +163,9 @@ function wirePtyEvents(): void {
   ptyManager.on('exit', (event) => {
     mainWindow?.webContents.send('pty:exit', event)
   })
+  ptyManager.on('session', (session) => {
+    mainWindow?.webContents.send('pty:session', session)
+  })
 }
 
 app.whenReady().then(async () => {

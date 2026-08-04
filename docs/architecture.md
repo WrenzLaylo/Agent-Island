@@ -8,15 +8,15 @@
 | Codex  | Missing   | not on PATH / common locations |
 | Hermes | Available | `...\hermes-agent\venv\Scripts\hermes.exe` · Hermes Agent v0.19.1 |
 
-## Phase 2 status
+## Phase 3 status
 
-- [x] node-pty ConPTY works inside Electron without rebuild (N-API prebuild)
-- [x] PtyManager start/write/resize/stop + replay buffer
-- [x] Typed IPC: `pty:start|write|resize|stop|list|replay` + `pty:data|exit` events
-- [x] xterm.js TerminalPanel in expanded island
-- [x] Lazy start on Expand / Open terminal
-- [x] Restart button + orphan cleanup on quit
-- [x] Unit tests (20) + headless Hermes PTY smoke (`npm run smoke:pty` / `scripts/smoke-hermes-pty.cjs`)
+- [x] Adapter descriptors for Claude / Codex / Hermes
+- [x] Launch specs via adapter layer (exe + cmd shim)
+- [x] Multi-agent xterm host — tab switch does not dispose other terminals
+- [x] PTY sessions survive tab switch and collapse
+- [x] Live session status on tabs (`live · pid …`)
+- [x] Demo approvals **off by default** (peek → Demo to enable)
+- [x] Unit tests for adapters + launch
 - [ ] Transparent click-through outside pill bounds
 - [ ] Installer / tray polish
 - [ ] Real approval prompt interception (Phase 4)

@@ -1,10 +1,11 @@
 import type { AgentId, AgentSnapshot, ApprovalRequest, IslandSnapshot } from '@shared/contracts'
 import { AGENT_ORDER } from '@shared/contracts'
+import { describeAdapterMode, getAdapter } from '@shared/adapters'
 import type { PtySessionInfo } from '@shared/pty-types'
 import { AgentTabs } from './AgentTabs'
 import { ApprovalCard } from './ApprovalCard'
 import { StatusDot } from './StatusDot'
-import { TerminalPanel } from './TerminalPanel'
+import { MultiAgentTerminals } from './MultiAgentTerminals'
 
 interface IslandShellProps {
   state: IslandSnapshot
@@ -13,6 +14,7 @@ interface IslandShellProps {
   queueCount: number
   approveEnabled: boolean
   discoveryNote: string
+  demoMode: boolean
   onSelectAgent: (agentId: AgentId) => void
   onClickPill: () => void
   onExpand: () => void
@@ -21,6 +23,7 @@ interface IslandShellProps {
   onDeny: () => void
   onDismiss: () => void
   onSessionChange?: (agentId: AgentId, info: PtySessionInfo | null, error?: string) => void
+  onToggleDemo?: () => void
 }
 
 export function IslandShell(props: IslandShellProps) {
@@ -31,6 +34,7 @@ export function IslandShell(props: IslandShellProps) {
     queueCount,
     approveEnabled,
     discoveryNote,
+    demoMode,
     onSelectAgent,
     onClickPill,
     onExpand,
@@ -38,8 +42,12 @@ export function IslandShell(props: IslandShellProps) {
     onApprove,
     onDeny,
     onDismiss,
-    onSessionChange
+    onSessionChange,
+    onToggleDemo
   } = props
+
+  const adapter = getAdapter(active.id)
+  const modeLabel = describeAdapterMode(active.integrationMode)
 
   if (state.mode === 'collapsed') {
     return (
@@ -51,6 +59,11 @@ export function IslandShell(props: IslandShellProps) {
       </button>
     )
   }
+
+  const showTerminal = state.mode === 'expanded'
+  // Keep terminal host mounted once user has expanded at least once in this open state cycle
+  // so tab switches inside expanded don't remount. We unmount only when leaving expanded.
+  // (PTY processes still survive collapse in main process.)
 
   return (
     <div className={`pill open mode-${state.mode}`} role="dialog" aria-label="Agent Island">
@@ -67,7 +80,7 @@ export function IslandShell(props: IslandShellProps) {
               Expand
             </button>
           )}
-          <button type="button" className="ghost" onClick={onCollapse}>
+          <button type="button" className="ghost" onClick={onCollapse} aria-label="Collapse">
             −
           </button>
         </div>
@@ -80,14 +93,13 @@ export function IslandShell(props: IslandShellProps) {
           onApprove={onApprove}
           onDeny={onDeny}
         />
-      ) : state.mode === 'expanded' ? (
-        <TerminalPanel
-          agentId={active.id}
-          label={active.label}
-          cwd={active.cwd}
-          available={active.available}
+      ) : showTerminal ? (
+        <MultiAgentTerminals
+          agents={state.agents}
+          activeAgentId={state.activeAgentId}
           discoveryNote={discoveryNote}
-          onSessionChange={(info, error) => onSessionChange?.(active.id, info, error)}
+          visible
+          onSessionChange={onSessionChange}
         />
       ) : state.mode === 'error' ? (
         <div className="status-panel error">
@@ -111,12 +123,23 @@ export function IslandShell(props: IslandShellProps) {
                 {active.label} · {active.status}
               </div>
               <div className="muted">{active.activityLabel}</div>
+              <div className="muted tiny">
+                {modeLabel}
+                {!adapter.capabilities.islandApprovals && ' · approvals in terminal'}
+              </div>
             </div>
           </div>
           <div className="muted tiny">{discoveryNote}</div>
-          <button type="button" className="primary open-terminal" onClick={onExpand}>
-            Open terminal
-          </button>
+          <div className="peek-actions">
+            <button type="button" className="primary open-terminal" onClick={onExpand}>
+              Open terminal
+            </button>
+            {onToggleDemo && (
+              <button type="button" className="ghost" onClick={onToggleDemo}>
+                {demoMode ? 'Hide demo' : 'Demo'}
+              </button>
+            )}
+          </div>
         </div>
       )}
     </div>

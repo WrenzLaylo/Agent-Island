@@ -11,6 +11,7 @@ import {
   validateSize
 } from '../../shared/pty-types'
 import type { DiscoveredAgent } from './discover'
+import { adapterEnv, buildLaunchSpec } from './launch'
 
 export interface LaunchSpec {
   command: string
@@ -29,6 +30,7 @@ interface LiveSession {
   term: pty.IPty
   info: PtySessionInfo
   replay: string
+  lastOutputAt: number
 }
 
 export class PtyManager extends EventEmitter {
@@ -57,7 +59,17 @@ export class PtyManager extends EventEmitter {
     return this.sessions.get(agentId)?.replay ?? ''
   }
 
-  start(agentId: AgentId, agent: DiscoveredAgent | undefined, cols: number, rows: number, cwd?: string): PtyStartResult {
+  isAlive(agentId: AgentId): boolean {
+    return Boolean(this.sessions.get(agentId)?.info.alive)
+  }
+
+  start(
+    agentId: AgentId,
+    agent: DiscoveredAgent | undefined,
+    cols: number,
+    rows: number,
+    cwd?: string
+  ): PtyStartResult {
     const sizeError = validateSize(cols, rows)
     if (sizeError) return { ok: false, error: sizeError }
 
@@ -74,18 +86,19 @@ export class PtyManager extends EventEmitter {
       this.sessions.delete(agentId)
     }
 
-    if (!agent?.available || !agent.path) {
-      return {
-        ok: false,
-        error: agent?.notes ?? `${agentId} is unavailable`
-      }
+    if (!agent) {
+      return { ok: false, error: `${agentId} is unavailable` }
     }
 
-    if (!existsSync(agent.path)) {
-      return { ok: false, error: `Executable missing: ${agent.path}` }
+    const launchOrError = buildLaunchSpec(agent, cwd ?? this.defaultCwd)
+    if ('error' in launchOrError) {
+      return { ok: false, error: launchOrError.error }
     }
+    const launch = launchOrError
 
-    const launch = resolveLaunchSpec(agentId, agent.path, cwd ?? this.defaultCwd)
+    if (!existsSync(agent.path ?? launch.command) && !existsSync(launch.command)) {
+      return { ok: false, error: `Executable missing: ${agent.path ?? launch.command}` }
+    }
 
     try {
       const term = this.spawnFn(launch.command, launch.args, {
@@ -95,9 +108,9 @@ export class PtyManager extends EventEmitter {
         cwd: launch.cwd,
         env: {
           ...process.env,
+          ...adapterEnv(agentId),
           TERM: 'xterm-256color',
           COLORTERM: 'truecolor',
-          // Help CLIs detect an interactive terminal hosted by Agent Island.
           AGENT_ISLAND: '1'
         } as Record<string, string>
       })
@@ -117,12 +130,15 @@ export class PtyManager extends EventEmitter {
         agentId,
         term,
         info,
-        replay: ''
+        replay: '',
+        lastOutputAt: Date.now()
       }
       this.sessions.set(agentId, session)
+      this.emit('session', { ...info })
 
       term.onData((data) => {
         session.replay = appendReplay(session.replay, data, MAX_REPLAY_CHARS)
+        session.lastOutputAt = Date.now()
         this.emit('data', { agentId, data })
       })
 
@@ -134,6 +150,7 @@ export class PtyManager extends EventEmitter {
           signal: typeof signal === 'number' ? signal : undefined
         }
         this.emit('exit', event)
+        this.emit('session', { ...session.info })
       })
 
       return { ok: true, session: { ...info }, replay: '' }
@@ -182,9 +199,8 @@ export class PtyManager extends EventEmitter {
       if (force) {
         session.term.kill()
       } else {
-        // Prefer a gentle exit signal for interactive CLIs.
         try {
-          session.term.write('\u0003') // Ctrl+C
+          session.term.write('\u0003')
         } catch {
           // ignore
         }
@@ -204,6 +220,7 @@ export class PtyManager extends EventEmitter {
       }
     }
     this.sessions.delete(agentId)
+    this.emit('session', { ...session.info, alive: false })
     return { ok: true }
   }
 
@@ -213,11 +230,10 @@ export class PtyManager extends EventEmitter {
   }
 }
 
+/** @deprecated Prefer buildLaunchSpec via launch.ts — kept for older tests. */
 export function resolveLaunchSpec(agentId: AgentId, executable: string, cwd: string): LaunchSpec {
-  // On Windows, .cmd shims need a shell. Direct .exe paths can run as-is.
   const lower = executable.toLowerCase()
   const needsShell = lower.endsWith('.cmd') || lower.endsWith('.bat')
-
   if (needsShell) {
     return {
       command: process.env.ComSpec || 'cmd.exe',
@@ -225,17 +241,7 @@ export function resolveLaunchSpec(agentId: AgentId, executable: string, cwd: str
       cwd
     }
   }
-
-  // Prefer launching agents in their normal interactive mode (no -q).
-  if (agentId === 'hermes') {
-    return { command: executable, args: [], cwd }
-  }
-  if (agentId === 'claude') {
-    return { command: executable, args: [], cwd }
-  }
-  if (agentId === 'codex') {
-    return { command: executable, args: [], cwd }
-  }
+  void agentId
   return { command: executable, args: [], cwd }
 }
 

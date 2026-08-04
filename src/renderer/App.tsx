@@ -4,6 +4,7 @@ import {
   AGENT_ORDER,
   type AgentId,
   type ApprovalRequest,
+  type IntegrationMode,
   type IslandSnapshot
 } from '@shared/contracts'
 import {
@@ -14,6 +15,7 @@ import {
   type IslandEvent
 } from '@shared/island-machine'
 import { canApproveRequest } from '@shared/approval-guard'
+import type { PtySessionInfo } from '@shared/pty-types'
 import { IslandShell } from './components/IslandShell'
 import { DemoControls } from './components/DemoControls'
 
@@ -23,13 +25,13 @@ function sizeForMode(mode: IslandSnapshot['mode'], showDemo: boolean): { width: 
       return { width: 300, height: 56 }
     case 'peek':
     case 'success':
-      return { width: 460, height: showDemo ? 186 : 124 }
+      return { width: 460, height: showDemo ? 200 : 150 }
     case 'error':
-      return { width: 480, height: showDemo ? 210 : 150 }
+      return { width: 480, height: showDemo ? 220 : 160 }
     case 'approval':
-      return { width: 540, height: showDemo ? 360 : 300 }
+      return { width: 540, height: showDemo ? 380 : 300 }
     case 'expanded':
-      return { width: 720, height: showDemo ? 560 : 500 }
+      return { width: 720, height: showDemo ? 580 : 520 }
     default:
       return { width: 300, height: 56 }
   }
@@ -45,35 +47,35 @@ export function App() {
   const reduceMotion = useReducedMotion()
   const [state, setState] = useState<IslandSnapshot>(() => createInitialIslandState())
   const [discoveryNote, setDiscoveryNote] = useState('Discovering agents…')
+  const [demoMode, setDemoMode] = useState(false)
   const dismissTimer = useRef<number | null>(null)
 
   const dispatch = (event: IslandEvent) => {
     setState((prev) => reduceIsland(prev, event))
   }
 
-  const handleSessionChange = (
-    agentId: AgentId,
-    info: import('@shared/pty-types').PtySessionInfo | null,
-    error?: string
-  ) => {
+  const handleSessionChange = (agentId: AgentId, info: PtySessionInfo | null, error?: string) => {
     if (info?.alive) {
       dispatch({
         type: 'SET_AGENT_STATUS',
         agentId,
         status: 'running',
-        activityLabel: `pid ${info.pid ?? 'live'}`
+        activityLabel: `live · pid ${info.pid ?? '?'}`,
+        available: true
       })
       return
     }
     if (error) {
+      const missing =
+        error.toLowerCase().includes('unavailable') || error.toLowerCase().includes('not found')
+      const exited = error.toLowerCase().startsWith('exited')
       dispatch({
         type: 'SET_AGENT_STATUS',
         agentId,
-        status: error.toLowerCase().includes('unavailable') || error.toLowerCase().includes('not found')
-          ? 'offline'
-          : 'error',
-        activityLabel: error.slice(0, 48),
-        lastError: error
+        status: missing ? 'offline' : exited ? 'idle' : 'error',
+        activityLabel: exited ? 'Session ended' : error.slice(0, 48),
+        lastError: error,
+        available: !missing
       })
     }
   }
@@ -82,11 +84,12 @@ export function App() {
   const queueCount = pendingApprovalCount(state)
   const active = state.agents[state.activeAgentId]
   const showDemo =
-    state.mode === 'peek' ||
-    state.mode === 'expanded' ||
-    state.mode === 'approval' ||
-    state.mode === 'success' ||
-    state.mode === 'error'
+    demoMode &&
+    (state.mode === 'peek' ||
+      state.mode === 'expanded' ||
+      state.mode === 'approval' ||
+      state.mode === 'success' ||
+      state.mode === 'error')
   const size = useMemo(() => sizeForMode(state.mode, showDemo), [state.mode, showDemo])
 
   useEffect(() => {
@@ -98,7 +101,14 @@ export function App() {
 
     void api.discoverAgents().then((result: unknown) => {
       const data = result as {
-        agents: Array<{ id: AgentId; available: boolean; path?: string; version?: string; notes?: string }>
+        agents: Array<{
+          id: AgentId
+          available: boolean
+          path?: string
+          version?: string
+          notes?: string
+          integrationMode?: IntegrationMode
+        }>
       }
       const lines = data.agents.map((agent) => {
         if (!agent.available) return `${agent.id}: missing`
@@ -111,7 +121,9 @@ export function App() {
           type: 'SET_AGENT_STATUS',
           agentId: agent.id,
           status: agent.available ? 'idle' : 'offline',
-          activityLabel: agent.available ? shortActivity(agent.version) : 'Not found'
+          activityLabel: agent.available ? shortActivity(agent.version) : 'Not found',
+          available: agent.available,
+          integrationMode: agent.integrationMode ?? (agent.available ? 'terminal-basic' : 'unavailable')
         })
       }
     })
@@ -126,10 +138,43 @@ export function App() {
     const offSelect = api.onSelectAgent((agentId: AgentId) => {
       dispatch({ type: 'SELECT_AGENT', agentId })
     })
+    const offSession = api.onPtySession?.((session: PtySessionInfo) => {
+      if (session.alive) {
+        dispatch({
+          type: 'SET_AGENT_STATUS',
+          agentId: session.agentId,
+          status: 'running',
+          activityLabel: `live · pid ${session.pid ?? '?'}`,
+          available: true
+        })
+      } else {
+        dispatch({
+          type: 'SET_AGENT_STATUS',
+          agentId: session.agentId,
+          status: 'idle',
+          activityLabel: 'Session ended',
+          available: true
+        })
+      }
+    })
+
+    void api.ptyList?.().then((sessions: PtySessionInfo[]) => {
+      for (const session of sessions) {
+        if (!session.alive) continue
+        dispatch({
+          type: 'SET_AGENT_STATUS',
+          agentId: session.agentId,
+          status: 'running',
+          activityLabel: `live · pid ${session.pid ?? '?'}`,
+          available: true
+        })
+      }
+    })
 
     return () => {
       offToggle()
       offSelect()
+      offSession?.()
     }
   }, [])
 
@@ -217,6 +262,7 @@ export function App() {
           queueCount={queueCount}
           approveEnabled={approveEnabled}
           discoveryNote={discoveryNote}
+          demoMode={demoMode}
           onSelectAgent={(agentId) => dispatch({ type: 'SELECT_AGENT', agentId })}
           onClickPill={() => dispatch({ type: 'CLICK_PILL' })}
           onExpand={() => dispatch({ type: 'EXPAND' })}
@@ -225,6 +271,7 @@ export function App() {
           onDeny={onDeny}
           onDismiss={() => dispatch({ type: 'DISMISS_TRANSIENT' })}
           onSessionChange={handleSessionChange}
+          onToggleDemo={() => setDemoMode((v) => !v)}
         />
       </motion.div>
 
@@ -238,7 +285,8 @@ export function App() {
                 type: 'SET_AGENT_STATUS',
                 agentId: state.activeAgentId,
                 status: 'thinking',
-                activityLabel: 'Thinking…'
+                activityLabel: 'Thinking…',
+                available: true
               })
             }
             onRunning={() =>
@@ -246,7 +294,8 @@ export function App() {
                 type: 'SET_AGENT_STATUS',
                 agentId: state.activeAgentId,
                 status: 'running',
-                activityLabel: 'Editing files…'
+                activityLabel: 'Editing files…',
+                available: true
               })
             }
             onComplete={() => dispatch({ type: 'COMPLETE', message: 'Task finished' })}

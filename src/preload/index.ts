@@ -26,6 +26,7 @@ export interface IslandApi {
   ptyReplay: (agentId: AgentId) => Promise<string>
   onPtyData: (handler: (event: PtyDataEvent) => void) => () => void
   onPtyExit: (handler: (event: PtyExitEvent) => void) => () => void
+  onPtySession: (handler: (session: PtySessionInfo) => void) => () => void
 }
 
 const api: IslandApi = {
@@ -58,6 +59,11 @@ const api: IslandApi = {
     const listener = (_event: Electron.IpcRendererEvent, payload: PtyExitEvent) => handler(payload)
     ipcRenderer.on('pty:exit', listener)
     return () => ipcRenderer.removeListener('pty:exit', listener)
+  },
+  onPtySession: (handler) => {
+    const listener = (_event: Electron.IpcRendererEvent, payload: PtySessionInfo) => handler(payload)
+    ipcRenderer.on('pty:session', listener)
+    return () => ipcRenderer.removeListener('pty:session', listener)
   }
 }
 

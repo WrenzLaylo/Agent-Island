@@ -5,6 +5,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import type { AgentId, IntegrationMode } from '../../shared/contracts'
+import { mergeDiscoveryWithAdapter } from './launch'
 
 const execFileAsync = promisify(execFile)
 
@@ -99,7 +100,7 @@ async function resolveClaude(): Promise<DiscoveredAgent> {
     path: found,
     version,
     integrationMode: 'terminal-basic',
-    notes: 'PTY integration planned; currently discovery only'
+    notes: 'Claude Code ready for ConPTY terminal session'
   }
 }
 
@@ -140,7 +141,7 @@ async function resolveCodex(): Promise<DiscoveredAgent> {
     path: found,
     version,
     integrationMode: 'terminal-basic',
-    notes: 'PTY integration planned; currently discovery only'
+    notes: 'Codex CLI ready for ConPTY terminal session'
   }
 }
 
@@ -180,12 +181,13 @@ async function resolveHermes(): Promise<DiscoveredAgent> {
     path: found,
     version,
     integrationMode: 'terminal-basic',
-    notes: 'PTY integration planned; currently discovery only'
+    notes: 'Hermes Agent ready for ConPTY terminal session'
   }
 }
 
 export async function discoverAgents(): Promise<AgentDiscoveryResult> {
-  const agents = await Promise.all([resolveClaude(), resolveCodex(), resolveHermes()])
+  const raw = await Promise.all([resolveClaude(), resolveCodex(), resolveHermes()])
+  const agents = raw.map(mergeDiscoveryWithAdapter)
   return {
     discoveredAt: new Date().toISOString(),
     agents

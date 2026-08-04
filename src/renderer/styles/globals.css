@@ -365,6 +365,51 @@ input,
   margin-top: 4px;
 }
 
+.peek-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 4px;
+}
+
+.terminal-stack {
+  position: relative;
+  flex: 1;
+  min-height: 280px;
+}
+
+.agent-terminal {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.agent-terminal.inactive {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.agent-terminal.active {
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.agent-terminal .terminal-body.xterm-host {
+  flex: 1;
+  min-height: 280px;
+}
+
+.term-error {
+  padding: 0 4px 4px;
+  color: #ffb4b4;
+}
+
+.terminal-panel.multi {
+  min-height: 0;
+  flex: 1;
+}
+
 .term-line {
   line-height: 1.5;
 }
