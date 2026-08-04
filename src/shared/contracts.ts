@@ -40,6 +40,10 @@ export interface ApprovalRequest {
   waitingForInput: boolean
   answered: boolean
   superseded: boolean
+  /** Where this request came from. */
+  source?: 'demo' | 'hermes-terminal' | 'claude-terminal' | 'codex-terminal'
+  /** Stable hash of the detected prompt content for stale checks. */
+  fingerprint?: string
 }
 
 export interface AgentSnapshot {

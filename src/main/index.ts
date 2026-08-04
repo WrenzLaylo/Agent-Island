@@ -34,7 +34,7 @@ function getIslandBounds(width: number, height: number) {
 }
 
 function createWindow(): void {
-  const initial = getIslandBounds(420, 72)
+  const initial = getIslandBounds(300, 56)
   const preloadPath = join(__dirname, '../preload/index.js')
   if (!existsSync(preloadPath)) {
     console.error('Missing preload script:', preloadPath)
@@ -51,16 +51,20 @@ function createWindow(): void {
     fullscreenable: false,
     skipTaskbar: false,
     hasShadow: false,
+    thickFrame: false,
     backgroundColor: '#00000000',
     title: 'Agent Island',
     webPreferences: {
       preload: preloadPath,
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false
+      sandbox: false,
+      backgroundThrottling: false
     }
   })
 
+  // Helps Windows DWM treat the window as layered/transparent.
+  mainWindow.setBackgroundColor('#00000000')
   mainWindow.setAlwaysOnTop(true, 'screen-saver')
   mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: false })
 
@@ -154,6 +158,22 @@ function registerIpc(): void {
     if (!isAgentId(agentId)) return ''
     return ptyManager.getReplay(agentId)
   })
+
+  ipcMain.handle(
+    'pty:answer-approval',
+    (
+      _event,
+      request: { agentId?: unknown; requestId?: unknown; decision?: unknown }
+    ) => {
+      if (!request || !isAgentId(request.agentId) || typeof request.requestId !== 'string') {
+        return { ok: false, error: 'Invalid approval answer request' }
+      }
+      if (request.decision !== 'approve' && request.decision !== 'deny') {
+        return { ok: false, error: 'Invalid decision' }
+      }
+      return ptyManager.answerApproval(request.agentId, request.requestId, request.decision)
+    }
+  )
 }
 
 function wirePtyEvents(): void {
@@ -165,6 +185,15 @@ function wirePtyEvents(): void {
   })
   ptyManager.on('session', (session) => {
     mainWindow?.webContents.send('pty:session', session)
+  })
+  ptyManager.on('approval', (request) => {
+    mainWindow?.webContents.send('island:approval', request)
+  })
+  ptyManager.on('approval-cleared', (request) => {
+    mainWindow?.webContents.send('island:approval-cleared', request)
+  })
+  ptyManager.on('approval-answered', (payload) => {
+    mainWindow?.webContents.send('island:approval-answered', payload)
   })
 }
 

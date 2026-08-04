@@ -27,6 +27,16 @@ export interface IslandApi {
   onPtyData: (handler: (event: PtyDataEvent) => void) => () => void
   onPtyExit: (handler: (event: PtyExitEvent) => void) => () => void
   onPtySession: (handler: (session: PtySessionInfo) => void) => () => void
+  ptyAnswerApproval: (request: {
+    agentId: AgentId
+    requestId: string
+    decision: 'approve' | 'deny'
+  }) => Promise<{ ok: boolean; error?: string }>
+  onApproval: (handler: (request: unknown) => void) => () => void
+  onApprovalCleared: (handler: (request: unknown) => void) => () => void
+  onApprovalAnswered: (
+    handler: (payload: { agentId: AgentId; requestId: string; decision: 'approve' | 'deny' }) => void
+  ) => () => void
 }
 
 const api: IslandApi = {
@@ -64,6 +74,25 @@ const api: IslandApi = {
     const listener = (_event: Electron.IpcRendererEvent, payload: PtySessionInfo) => handler(payload)
     ipcRenderer.on('pty:session', listener)
     return () => ipcRenderer.removeListener('pty:session', listener)
+  },
+  ptyAnswerApproval: (request) => ipcRenderer.invoke('pty:answer-approval', request),
+  onApproval: (handler) => {
+    const listener = (_event: Electron.IpcRendererEvent, payload: unknown) => handler(payload)
+    ipcRenderer.on('island:approval', listener)
+    return () => ipcRenderer.removeListener('island:approval', listener)
+  },
+  onApprovalCleared: (handler) => {
+    const listener = (_event: Electron.IpcRendererEvent, payload: unknown) => handler(payload)
+    ipcRenderer.on('island:approval-cleared', listener)
+    return () => ipcRenderer.removeListener('island:approval-cleared', listener)
+  },
+  onApprovalAnswered: (handler) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      payload: { agentId: AgentId; requestId: string; decision: 'approve' | 'deny' }
+    ) => handler(payload)
+    ipcRenderer.on('island:approval-answered', listener)
+    return () => ipcRenderer.removeListener('island:approval-answered', listener)
   }
 }
 

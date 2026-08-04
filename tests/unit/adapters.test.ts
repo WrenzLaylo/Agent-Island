@@ -3,14 +3,19 @@ import { getAdapter, describeAdapterMode } from '../../src/shared/adapters'
 import { buildLaunchSpec, mergeDiscoveryWithAdapter } from '../../src/main/agents/launch'
 
 describe('adapters', () => {
-  it('declares multi-session terminal capability without island approvals', () => {
-    for (const id of ['claude', 'codex', 'hermes'] as const) {
+  it('declares multi-session terminal capability without island approvals for claude/codex', () => {
+    for (const id of ['claude', 'codex'] as const) {
       const adapter = getAdapter(id)
       expect(adapter.capabilities.interactiveTerminal).toBe(true)
       expect(adapter.capabilities.multiSession).toBe(true)
       expect(adapter.capabilities.islandApprovals).toBe(false)
       expect(adapter.integrationMode).toBe('terminal-basic')
     }
+  })
+
+  it('enables island approvals for hermes in phase 4', () => {
+    const adapter = getAdapter('hermes')
+    expect(adapter.capabilities.islandApprovals).toBe(true)
   })
 
   it('describes modes for diagnostics', () => {

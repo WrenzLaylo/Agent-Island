@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events'
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import * as pty from 'node-pty'
-import type { AgentId } from '../../shared/contracts'
+import type { AgentId, ApprovalRequest } from '../../shared/contracts'
 import {
   MAX_REPLAY_CHARS,
   type PtyExitEvent,
@@ -12,6 +12,13 @@ import {
 } from '../../shared/pty-types'
 import type { DiscoveredAgent } from './discover'
 import { adapterEnv, buildLaunchSpec } from './launch'
+import {
+  createApprovalTrackerState,
+  resolveHermesResponseKeys,
+  updateHermesApprovalTracker,
+  type ApprovalTrackerState
+} from './hermes-approval'
+import { canApproveRequest } from '../../shared/approval-guard'
 
 export interface LaunchSpec {
   command: string
@@ -31,6 +38,7 @@ interface LiveSession {
   info: PtySessionInfo
   replay: string
   lastOutputAt: number
+  approval: ApprovalTrackerState
 }
 
 export class PtyManager extends EventEmitter {
@@ -57,6 +65,10 @@ export class PtyManager extends EventEmitter {
 
   getReplay(agentId: AgentId): string {
     return this.sessions.get(agentId)?.replay ?? ''
+  }
+
+  getPendingApproval(agentId: AgentId): ApprovalRequest | null {
+    return this.sessions.get(agentId)?.approval.pending ?? null
   }
 
   isAlive(agentId: AgentId): boolean {
@@ -131,7 +143,8 @@ export class PtyManager extends EventEmitter {
         term,
         info,
         replay: '',
-        lastOutputAt: Date.now()
+        lastOutputAt: Date.now(),
+        approval: createApprovalTrackerState()
       }
       this.sessions.set(agentId, session)
       this.emit('session', { ...info })
@@ -140,10 +153,12 @@ export class PtyManager extends EventEmitter {
         session.replay = appendReplay(session.replay, data, MAX_REPLAY_CHARS)
         session.lastOutputAt = Date.now()
         this.emit('data', { agentId, data })
+        this.scanApprovals(session)
       })
 
       term.onExit(({ exitCode, signal }) => {
         session.info.alive = false
+        this.scanApprovals(session)
         const event: PtyExitEvent = {
           agentId,
           exitCode: exitCode ?? 0,
@@ -184,6 +199,75 @@ export class PtyManager extends EventEmitter {
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) }
     }
+  }
+
+  answerApproval(
+    agentId: AgentId,
+    requestId: string,
+    decision: 'approve' | 'deny'
+  ): { ok: boolean; error?: string } {
+    const session = this.sessions.get(agentId)
+    if (!session) return { ok: false, error: 'No session' }
+    if (agentId !== 'hermes') {
+      return { ok: false, error: 'Island approvals only supported for Hermes in Phase 4' }
+    }
+
+    this.scanApprovals(session)
+    const pending = session.approval.pending
+    if (!pending || pending.id !== requestId) {
+      return { ok: false, error: 'No matching pending approval' }
+    }
+
+    const guard = canApproveRequest({
+      request: {
+        ...pending,
+        processAlive: session.info.alive
+      },
+      displayedRequestId: requestId
+    })
+    if (decision === 'approve' && !guard.canApprove) {
+      return { ok: false, error: guard.reason ?? 'Approve blocked by safety guard' }
+    }
+    if (decision === 'deny' && (pending.answered || !session.info.alive)) {
+      return { ok: false, error: 'Cannot deny this request' }
+    }
+
+    const recheck = updateHermesApprovalTracker({
+      state: session.approval,
+      chunkOrFullBuffer: session.replay,
+      agentId,
+      cwd: session.info.cwd,
+      processAlive: session.info.alive
+    })
+    session.approval = recheck.state
+    if (
+      !session.approval.pending ||
+      session.approval.pending.fingerprint !== pending.fingerprint ||
+      session.approval.pending.id !== requestId
+    ) {
+      return { ok: false, error: 'Approval panel changed or disappeared — open terminal' }
+    }
+
+    const keys = resolveHermesResponseKeys(session.approval, decision)
+    if (!keys.ok) return { ok: false, error: keys.reason }
+
+    try {
+      session.term.write(keys.keys)
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
+
+    this.emit('approval-answered', {
+      agentId,
+      requestId,
+      decision
+    })
+    session.approval = {
+      pending: null,
+      lastFingerprint: pending.fingerprint ?? null,
+      responseKeys: null
+    }
+    return { ok: true }
   }
 
   async stop(agentId: AgentId, force = false): Promise<{ ok: boolean; error?: string }> {
@@ -227,6 +311,24 @@ export class PtyManager extends EventEmitter {
   async stopAll(): Promise<void> {
     const ids = [...this.sessions.keys()]
     await Promise.all(ids.map((id) => this.stop(id, true)))
+  }
+
+  private scanApprovals(session: LiveSession): void {
+    if (session.agentId !== 'hermes') return
+    const update = updateHermesApprovalTracker({
+      state: session.approval,
+      chunkOrFullBuffer: session.replay,
+      agentId: session.agentId,
+      cwd: session.info.cwd,
+      processAlive: session.info.alive
+    })
+    session.approval = update.state
+    if (update.cleared) {
+      this.emit('approval-cleared', update.cleared)
+    }
+    if (update.raised) {
+      this.emit('approval', update.raised)
+    }
   }
 }
 

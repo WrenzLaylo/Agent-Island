@@ -64,9 +64,9 @@ export const AGENT_ADAPTERS: Record<AgentId, AgentAdapterDescriptor> = {
     capabilities: {
       interactiveTerminal: true,
       multiSession: true,
-      islandApprovals: false
+      islandApprovals: true
     },
-    notes: 'Hermes Agent via ConPTY. Island approvals not wired (Phase 4).'
+    notes: 'Hermes Agent via ConPTY. Dangerous-command panel bridged to island Approve/Deny.'
   }
 }
 

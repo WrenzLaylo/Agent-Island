@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { motion, useReducedMotion } from 'framer-motion'
 import {
   AGENT_ORDER,
   type AgentId,
@@ -44,7 +43,6 @@ function shortActivity(version?: string): string {
 }
 
 export function App() {
-  const reduceMotion = useReducedMotion()
   const [state, setState] = useState<IslandSnapshot>(() => createInitialIslandState())
   const [discoveryNote, setDiscoveryNote] = useState('Discovering agents…')
   const [demoMode, setDemoMode] = useState(false)
@@ -171,10 +169,32 @@ export function App() {
       }
     })
 
+    const offApproval = api.onApproval?.((request: unknown) => {
+      const req = request as ApprovalRequest
+      if (!req?.id || !req.agentId) return
+      dispatch({ type: 'ENQUEUE_APPROVAL', request: req })
+    })
+    const offApprovalCleared = api.onApprovalCleared?.((request: unknown) => {
+      const req = request as ApprovalRequest
+      if (!req?.id) return
+      // Soft-clear: mark answered/superseded via deny path only if still pending in UI.
+      setState((prev) => {
+        const existing = prev.approvals[req.id]
+        if (!existing || existing.answered) return prev
+        return reduceIsland(prev, {
+          type: 'ANSWER_APPROVAL',
+          requestId: req.id,
+          decision: 'deny'
+        })
+      })
+    })
+
     return () => {
       offToggle()
       offSelect()
       offSession?.()
+      offApproval?.()
+      offApprovalCleared?.()
     }
   }, [])
 
@@ -200,13 +220,41 @@ export function App() {
     ? canApproveRequest({ request: approval, displayedRequestId: approval.id }).canApprove
     : false
 
-  const onApprove = () => {
+  const onApprove = async () => {
     if (!approval) return
+    if (approval.source === 'hermes-terminal') {
+      const api = window.agentIsland
+      const result = await api.ptyAnswerApproval({
+        agentId: approval.agentId,
+        requestId: approval.id,
+        decision: 'approve'
+      })
+      if (!result.ok) {
+        dispatch({ type: 'SET_ERROR', message: result.error ?? 'Approve failed' })
+        return
+      }
+      dispatch({ type: 'ANSWER_APPROVAL', requestId: approval.id, decision: 'approve' })
+      return
+    }
     dispatch({ type: 'ANSWER_APPROVAL', requestId: approval.id, decision: 'approve' })
   }
 
-  const onDeny = () => {
+  const onDeny = async () => {
     if (!approval) return
+    if (approval.source === 'hermes-terminal') {
+      const api = window.agentIsland
+      const result = await api.ptyAnswerApproval({
+        agentId: approval.agentId,
+        requestId: approval.id,
+        decision: 'deny'
+      })
+      if (!result.ok) {
+        dispatch({ type: 'SET_ERROR', message: result.error ?? 'Deny failed' })
+        return
+      }
+      dispatch({ type: 'ANSWER_APPROVAL', requestId: approval.id, decision: 'deny' })
+      return
+    }
     dispatch({ type: 'ANSWER_APPROVAL', requestId: approval.id, decision: 'deny' })
   }
 
@@ -235,7 +283,9 @@ export function App() {
       processAlive: true,
       waitingForInput: true,
       answered: false,
-      superseded: false
+      superseded: false,
+      source: 'demo',
+      fingerprint: `demo-${now}`
     }
     dispatch({ type: 'ENQUEUE_APPROVAL', request })
   }
@@ -246,15 +296,7 @@ export function App() {
       onMouseEnter={() => dispatch({ type: 'HOVER_ENTER' })}
       onMouseLeave={() => dispatch({ type: 'HOVER_LEAVE' })}
     >
-      <motion.div
-        className="island-frame"
-        animate={{ width: size.width, height: size.height - (showDemo ? 62 : 0) }}
-        transition={
-          reduceMotion
-            ? { duration: 0 }
-            : { type: 'spring', stiffness: 380, damping: 32, mass: 0.7 }
-        }
-      >
+      <div className={`island-frame ${showDemo ? 'with-demo' : 'fill'}`}>
         <IslandShell
           state={state}
           active={active}
@@ -273,7 +315,7 @@ export function App() {
           onSessionChange={handleSessionChange}
           onToggleDemo={() => setDemoMode((v) => !v)}
         />
-      </motion.div>
+      </div>
 
       {showDemo && (
         <div className="demo-dock">
