@@ -103,12 +103,40 @@ function sanitiseDisplay(value: Partial<SavedDisplayLayout>): SavedDisplayLayout
   }
 }
 
-function persist(): void {
-  const target = storePath()
-  mkdirSync(dirname(target), { recursive: true })
-  const tmp = `${target}.tmp`
-  writeFileSync(tmp, JSON.stringify(state, null, 2), 'utf8')
-  renameSync(tmp, target)
+let persistTimer: NodeJS.Timeout | null = null
+
+function persistNow(): void {
+  persistTimer = null
+  try {
+    const target = storePath()
+    mkdirSync(dirname(target), { recursive: true })
+    const tmp = `${target}.tmp`
+    writeFileSync(tmp, JSON.stringify(state, null, 2), 'utf8')
+    renameSync(tmp, target)
+  } catch (error) {
+    // Losing a layout write is survivable; crashing the main process is not.
+    console.warn('Unable to persist Agent Island settings:', error)
+  }
+}
+
+/**
+ * Coalesced write. Layout is saved from the window's `moved` event, which fires
+ * once per drag frame — persisting synchronously there meant a writeFileSync +
+ * renameSync on the main thread ~60 times a second while the user dragged.
+ */
+function persist(immediate = false): void {
+  if (immediate) {
+    if (persistTimer) clearTimeout(persistTimer)
+    persistNow()
+    return
+  }
+  if (persistTimer) return
+  persistTimer = setTimeout(persistNow, 400)
+}
+
+/** Flush any coalesced write before the process exits. */
+export function flushPersistedStore(): void {
+  if (persistTimer) persistNow()
 }
 
 export function loadPersistedStore(): PersistedStore {
@@ -145,7 +173,8 @@ export function getSettings(): IslandSettings {
 
 export function updateSettings(patch: Partial<IslandSettings>): IslandSettings {
   state.settings = sanitiseSettings({ ...state.settings, ...patch })
-  persist()
+  // Explicit user choices are written straight through; only layout is coalesced.
+  persist(true)
   return getSettings()
 }
 
@@ -157,6 +186,16 @@ export function getDisplayLayout(displayId: string | number): SavedDisplayLayout
 export function saveDisplayLayout(displayId: string | number, layout: SavedDisplayLayout): void {
   const clean = sanitiseDisplay(layout)
   if (!clean) return
-  state.displays[String(displayId)] = clean
+  const key = String(displayId)
+  const previous = state.displays[key]
+  if (
+    previous &&
+    previous.docked === clean.docked &&
+    previous.xRatio === clean.xRatio &&
+    previous.yRatio === clean.yRatio
+  ) {
+    return
+  }
+  state.displays[key] = clean
   persist()
 }

@@ -1,4 +1,5 @@
 import type { IslandSettings, PreferredDockSide } from '@shared/contracts'
+import { CloseIcon } from './icons'
 
 interface SettingsPanelProps {
   settings: IslandSettings
@@ -34,7 +35,7 @@ export function SettingsPanel({ settings, onChange, onClose, onReturnHome }: Set
           <small>Keep the island quiet, useful and out of the way.</small>
         </div>
         <button type="button" className="icon-button" data-no-drag="true" onClick={onClose} aria-label="Close settings">
-          ×
+          <CloseIcon />
         </button>
       </div>
 

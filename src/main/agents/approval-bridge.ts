@@ -28,6 +28,11 @@ export interface BridgePendingFile {
 
 const APPROVAL_DECISIONS: ApprovalDecision[] = ['once', 'session', 'always', 'deny']
 
+/** U+FEFF, which `JSON.parse` rejects. */
+export function stripBom(input: string): string {
+  return input.charCodeAt(0) === 0xfeff ? input.slice(1) : input
+}
+
 function normaliseChoices(choices: BridgePendingFile['choices']): ApprovalDecision[] {
   const filtered = Array.isArray(choices)
     ? choices.filter((choice): choice is ApprovalDecision => APPROVAL_DECISIONS.includes(choice))
@@ -119,10 +124,14 @@ export async function scanPending(root = bridgeRoot()): Promise<BridgePendingFil
     if (!name.endsWith('.json')) continue
     try {
       const raw = await readFile(join(dir, name), 'utf8')
-      const parsed = JSON.parse(raw) as BridgePendingFile
+      // Anything writing this file from PowerShell, .NET or a Windows editor is
+      // likely to emit UTF-8 with a BOM, and JSON.parse rejects the leading
+      // U+FEFF. Silently dropping those requests means an agent waits forever
+      // for a decision the island never showed.
+      const parsed = JSON.parse(stripBom(raw)) as BridgePendingFile
       if (parsed?.id && parsed?.command) out.push(parsed)
-    } catch {
-      // skip corrupt
+    } catch (error) {
+      console.warn(`Ignoring unreadable approval request ${name}:`, error)
     }
   }
   return out.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))

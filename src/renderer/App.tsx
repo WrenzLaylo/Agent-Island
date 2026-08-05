@@ -26,36 +26,40 @@ function isVisibleActivity(status: IslandSnapshot['agents'][AgentId]['status']):
   return status === 'running' || status === 'thinking' || status === 'waiting' || status === 'completed' || status === 'error'
 }
 
+/**
+ * Window size == visible size. There is no native mask and no frame inset any
+ * more, so these are the literal pixels the user sees. Everything sits on a
+ * 4px grid so the shell never lands on a half-pixel at fractional DPI.
+ */
 function sizeForPresentation(
   mode: IslandSnapshot['mode'],
-  queueCount: number,
   docked: DockSide | null,
   approvalChoiceCount: number,
   panel: IslandPanel,
   quietIdle: boolean
 ): { width: number; height: number } {
-  if (panel === 'settings') return { width: 478, height: 660 }
-  if (panel === 'onboarding') return { width: 430, height: 420 }
-  if (panel === 'handoff') return { width: 410, height: 224 }
-  if (mode === 'collapsed' && docked) return quietIdle ? { width: 48, height: 48 } : { width: 62, height: 62 }
+  if (panel === 'settings') return { width: 440, height: 600 }
+  if (panel === 'onboarding') return { width: 400, height: 380 }
+  if (panel === 'handoff') return { width: 392, height: 196 }
+  if (mode === 'collapsed' && docked) return quietIdle ? { width: 36, height: 36 } : { width: 48, height: 48 }
 
   switch (mode) {
     case 'collapsed':
-      return quietIdle ? { width: 128, height: 48 } : { width: 318, height: 66 }
+      return quietIdle ? { width: 116, height: 32 } : { width: 300, height: 52 }
     case 'peek':
     case 'expanded':
-      return { width: 438, height: 214 }
+      return { width: 400, height: 172 }
     case 'success':
-      return { width: 390, height: 126 }
+      return { width: 340, height: 96 }
     case 'error':
-      return { width: 414, height: 138 }
+      return { width: 372, height: 108 }
     case 'approval':
       return {
-        width: 478,
-        height: approvalChoiceCount >= 4 ? 610 : approvalChoiceCount === 3 ? 548 : 458
+        width: 440,
+        height: approvalChoiceCount >= 4 ? 516 : approvalChoiceCount === 3 ? 460 : 404
       }
     default:
-      return quietIdle ? { width: 128, height: 48 } : { width: 318, height: 66 }
+      return quietIdle ? { width: 116, height: 32 } : { width: 300, height: 52 }
   }
 }
 
@@ -146,8 +150,8 @@ export function App() {
     queueCount === 0 &&
     !activityAgent
   const size = useMemo(
-    () => sizeForPresentation(state.mode, queueCount, docked, approval?.choices?.length ?? 2, panel, quietIdle),
-    [state.mode, queueCount, docked, approval?.choices?.length, panel, quietIdle]
+    () => sizeForPresentation(state.mode, docked, approval?.choices?.length ?? 2, panel, quietIdle),
+    [state.mode, docked, approval?.choices?.length, panel, quietIdle]
   )
 
   useEffect(() => {
@@ -404,9 +408,16 @@ export function App() {
     if (!api) return
     const run = ++resizeRunRef.current
     setIsMorphing(true)
-    void api.resize(size.width, size.height).finally(() => {
-      if (resizeRunRef.current === run) setIsMorphing(false)
-    })
+    // A rejected resize must still release the morph lock, otherwise every
+    // control in the island stays permanently inert behind `is-morphing`.
+    void api
+      .resize(size.width, size.height)
+      .catch((error: unknown) => {
+        console.error('Island resize failed:', error)
+      })
+      .finally(() => {
+        if (resizeRunRef.current === run) setIsMorphing(false)
+      })
   }, [size.width, size.height, settingsLoaded])
 
   useEffect(() => {

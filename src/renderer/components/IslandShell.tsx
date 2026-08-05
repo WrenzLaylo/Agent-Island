@@ -16,6 +16,7 @@ import { ApprovalCard } from './ApprovalCard'
 import { OnboardingCard } from './OnboardingCard'
 import { SettingsPanel } from './SettingsPanel'
 import { StatusDot } from './StatusDot'
+import { CloseIcon, GearIcon, TerminalIcon } from './icons'
 
 export type IslandPanel = 'settings' | 'onboarding' | 'handoff' | null
 
@@ -47,40 +48,6 @@ interface IslandShellProps {
   onReturnHome: () => void
 }
 
-function ChevronIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d="m9.5 7 5 5-5 5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  )
-}
-
-function GearIcon() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.7" />
-      <path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.4 1a7 7 0 0 0-1.8-1L14.4 3h-4.8l-.4 3.1a7 7 0 0 0-1.8 1l-2.4-1-2 3.4L5 11a7 7 0 0 0 0 2l-2 1.5 2 3.4 2.4-1a7 7 0 0 0 1.8 1l.4 3.1h4.8l.4-3.1a7 7 0 0 0 1.8-1l2.4 1 2-3.4L19 13a7 7 0 0 0 .1-1Z" stroke="currentColor" strokeWidth="1.45" strokeLinejoin="round" />
-    </svg>
-  )
-}
-
-function TerminalIcon() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <rect x="3.5" y="4.5" width="17" height="15" rx="2.5" stroke="currentColor" strokeWidth="1.6" />
-      <path d="m7.5 9 3 3-3 3M13 15h4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  )
-}
-
-function CloseIcon() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d="m8 8 8 8M16 8l-8 8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-    </svg>
-  )
-}
-
 function ActivityGlyph({ waiting = false }: { waiting?: boolean }) {
   return (
     <span className={`activity-glyph ${waiting ? 'is-waiting' : ''}`} aria-hidden="true">
@@ -89,29 +56,50 @@ function ActivityGlyph({ waiting = false }: { waiting?: boolean }) {
   )
 }
 
+/**
+ * Deliberately name-free: the agent's name is already the header title, so
+ * repeating it here ("Claude" / "Claude is ready" / "Installed and ready" all
+ * on one 172px panel) was three restatements of one fact.
+ */
 function statusHeadline(active: AgentSnapshot): string {
   switch (active.status) {
     case 'running':
     case 'thinking':
-      return `${active.label} is working`
+      return 'Working'
     case 'waiting':
-      return `${active.label} needs you`
+      return 'Needs you'
     case 'completed':
-      return `${active.label} finished`
+      return 'Finished'
     case 'error':
-      return `${active.label} needs attention`
+      return 'Needs attention'
     case 'offline':
-      return `${active.label} is unavailable`
+      return 'Unavailable'
     default:
-      return `${active.label} is ready`
+      return 'Ready'
   }
 }
 
+/** The supporting line must add a fact, not restate the headline. */
 function statusDescription(active: AgentSnapshot): string {
   if (!active.available) return 'Install or sign in to this agent to make it available.'
-  if (active.status === 'running' || active.status === 'thinking') return active.activityLabel || 'Working in the background.'
-  if (active.status === 'waiting') return 'A decision is waiting in the approval queue.'
-  return active.activityLabel || 'Listening in the background.'
+  switch (active.status) {
+    case 'running':
+    case 'thinking':
+      return active.activityLabel || 'Working in the background.'
+    case 'waiting':
+      return 'A decision is waiting in the approval queue.'
+    case 'completed':
+      return 'The last session exited cleanly.'
+    case 'error':
+      return active.lastError || 'The last session ended unexpectedly.'
+    default:
+      return 'No session running. Approvals will appear here.'
+  }
+}
+
+/** Motion only where something is genuinely in flight. */
+function showsActivity(status: AgentSnapshot['status']): boolean {
+  return status === 'running' || status === 'thinking' || status === 'waiting'
 }
 
 function transientTitle(state: IslandSnapshot): string {
@@ -131,10 +119,21 @@ function transientTitle(state: IslandSnapshot): string {
   }
 }
 
-const contentTransition = {
-  initial: { opacity: 0, y: 7, scale: 0.992 },
-  animate: { opacity: 1, y: 0, scale: 1 },
-  exit: { opacity: 0, y: -5, scale: 0.995 }
+/**
+ * The OS window is the only thing that animates geometry (see `animateIslandTo`
+ * in the main process). Content therefore does not move or scale — it only
+ * cross-fades, so what the user reads is always flush with the real frame.
+ * Views overlap during the fade (`.island-content` is absolutely positioned)
+ * rather than queueing exit-then-enter, which used to take ~470ms against a
+ * ~250ms window morph and made the transition feel like two separate events.
+ */
+function contentFade(enter: number, exit: number) {
+  return {
+    initial: { opacity: 0 },
+    animate: { opacity: 1 },
+    exit: { opacity: 0, transition: { duration: exit } },
+    transition: { duration: enter }
+  }
 }
 
 export function IslandShell(props: IslandShellProps) {
@@ -173,31 +172,38 @@ export function IslandShell(props: IslandShellProps) {
   const isCompact = state.mode === 'collapsed' && !docked && !panel
   const view = panel ?? (isDockOrb ? 'dock' : isCompact ? 'compact' : state.mode)
   const approvalAgent = approval ? state.agents[approval.agentId] : active
-  const motionDuration = settings.reducedMotion ? 0.08 : 0.2
+  const fade = contentFade(settings.reducedMotion ? 0.01 : 0.16, settings.reducedMotion ? 0.01 : 0.1)
 
   return (
-    <motion.section
-      layout
-      className={`island-surface view-${view} ${docked ? `anchored-${docked}` : ''} ${hasAttention ? 'has-attention' : ''} ${quietIdle ? 'is-quiet-idle' : ''} ${isMorphing ? 'is-morphing' : ''}`}
+    <section
+      className={`island-surface view-${view} ${hasAttention ? 'has-attention' : ''} ${quietIdle ? 'is-quiet-idle' : ''} ${isMorphing ? 'is-morphing' : ''}`}
       data-drag-region="true"
       data-mode={view}
-      aria-live="polite"
-      transition={settings.reducedMotion ? { duration: 0.08 } : { type: 'spring', stiffness: 380, damping: 34, mass: 0.88 }}
     >
+      {/* Announce only the state sentence, not the whole subtree — an aria-live
+          region wrapped around the entire island re-read every control on every
+          render. */}
+      <span className="sr-only" role="status" aria-live="polite">
+        {hasApproval
+          ? `Approval required from ${approvalAgent.label}. ${queueCount} pending.`
+          : hasTerminalInput
+            ? `${active.label} needs input in the terminal.`
+            : `${active.label}: ${statusHeadline(active)}`}
+      </span>
       <AnimatePresence initial={false}>
         {hasAttention ? (
           <motion.span
             key={`attention-${attentionNonce}`}
             className="attention-flash"
-            initial={{ opacity: 0.72, scale: 0.985 }}
-            animate={{ opacity: 0, scale: 1.015 }}
+            initial={{ opacity: 0.6 }}
+            animate={{ opacity: 0 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: settings.reducedMotion ? 0.08 : 0.9, ease: 'easeOut' }}
+            transition={{ duration: settings.reducedMotion ? 0.01 : 0.75, ease: 'easeOut' }}
             aria-hidden="true"
           />
         ) : null}
       </AnimatePresence>
-      <AnimatePresence mode="wait" initial={false}>
+      <AnimatePresence initial={false}>
         {isDockOrb ? (
           <motion.button
             key="dock"
@@ -206,14 +212,15 @@ export function IslandShell(props: IslandShellProps) {
             data-drag-region="true"
             onClick={onClickPill}
             aria-label={`Open Agent Island. ${hasApproval ? `${queueCount} approvals waiting.` : `${active.label} ${active.activityLabel}.`}`}
-            {...contentTransition}
-            transition={{ duration: motionDuration }}
+            {...fade}
           >
             {quietIdle ? null : (
               <>
-                <AgentMark agentId={active.id} compact />
                 <span className={`dock-status-ring status-${hasApproval ? 'waiting' : active.status}`} />
-                {hasApproval ? <span className="dock-badge">{queueCount}</span> : null}
+                <AgentMark agentId={active.id} mini />
+                {/* The badge has to stay round to fit inside the disc, so the
+                    count is capped rather than allowed to widen it. */}
+                {hasApproval ? <span className="dock-badge">{queueCount > 9 ? '9+' : queueCount}</span> : null}
               </>
             )}
           </motion.button>
@@ -225,42 +232,47 @@ export function IslandShell(props: IslandShellProps) {
             data-drag-region="true"
             onClick={onClickPill}
             aria-label="Open Agent Island"
-            {...contentTransition}
-            transition={{ duration: motionDuration }}
+            {...fade}
           >
             {quietIdle ? (
               <span className="quiet-idle-hit-area" aria-hidden="true" />
             ) : (
               <>
                 <span className="compact-leading" data-drag-region="true">
-                  <AgentMark agentId={hasApproval && approval ? approval.agentId : active.id} />
+                  <AgentMark agentId={hasApproval && approval ? approval.agentId : active.id} compact />
                   <StatusDot status={hasApproval ? 'waiting' : active.status} />
                 </span>
                 <span className="compact-copy" data-drag-region="true">
+                  {/* The count lives in the trailing chip; repeating it here as
+                      "1 pending" said the same thing twice on one 300px pill. */}
                   <strong>{hasApproval ? 'Approval required' : active.label}</strong>
-                  <small>{hasApproval ? `${queueCount} pending · ${approvalAgent.label}` : active.activityLabel || 'Ready'}</small>
+                  <small>{hasApproval ? approvalAgent.label : active.activityLabel || 'Ready'}</small>
                 </span>
                 <span className="compact-trailing" data-drag-region="true">
-                  {hasApproval ? <span className="compact-count">{queueCount}</span> : <ActivityGlyph waiting={active.status === 'waiting'} />}
-                  <span className="compact-chevron"><ChevronIcon /></span>
+                  {hasApproval ? (
+                    <span className="compact-count">{queueCount}</span>
+                  ) : showsActivity(active.status) ? (
+                    <ActivityGlyph waiting={active.status === 'waiting'} />
+                  ) : (
+                    <StatusDot status={active.status} />
+                  )}
                 </span>
               </>
             )}
           </motion.button>
         ) : panel === 'onboarding' ? (
-          <motion.div key="onboarding" className="island-content" {...contentTransition} transition={{ duration: motionDuration, delay: settings.reducedMotion ? 0 : 0.07 }}>
+          <motion.div key="onboarding" className="island-content" {...fade}>
             <OnboardingCard onComplete={onCompleteOnboarding} />
           </motion.div>
         ) : panel === 'settings' ? (
-          <motion.div key="settings" className="island-content" {...contentTransition} transition={{ duration: motionDuration, delay: settings.reducedMotion ? 0 : 0.07 }}>
+          <motion.div key="settings" className="island-content" {...fade}>
             <SettingsPanel settings={settings} onChange={onSettingsChange} onClose={onClosePanel} onReturnHome={onReturnHome} />
           </motion.div>
         ) : panel === 'handoff' && terminalInput ? (
           <motion.div
             key={`handoff-${terminalInput.id}`}
             className="island-content handoff-view"
-            {...contentTransition}
-            transition={{ duration: motionDuration, delay: settings.reducedMotion ? 0 : 0.06 }}
+            {...fade}
             role="dialog"
             aria-label={`${state.agents[terminalInput.agentId].label} needs input in the terminal`}
           >
@@ -291,15 +303,14 @@ export function IslandShell(props: IslandShellProps) {
           <motion.div
             key={`approval-${approval.id}-${attentionNonce}`}
             className="island-content approval-view"
-            {...contentTransition}
-            transition={{ duration: motionDuration, delay: settings.reducedMotion ? 0 : 0.08 }}
+            {...fade}
             role="dialog"
             aria-label="Approval required"
           >
             <div className="panel-header approval-panel-header" data-drag-region="true">
               <div className="header-agent">
                 <span className="header-mark-wrap"><AgentMark agentId={approval.agentId} compact /><StatusDot status="waiting" /></span>
-                <span><strong>Approval required</strong><small>{queueCount > 1 ? `${queueCount} pending · reviewing the oldest request` : `${approvalAgent.label} is paused`}</small></span>
+                <span><strong>Approval required</strong><small>{queueCount > 1 ? `${approvalAgent.label} · oldest of ${queueCount}` : approvalAgent.label}</small></span>
               </div>
               <button type="button" className="icon-button" data-no-drag="true" onClick={onCollapse} aria-label="Collapse approval">
                 <CloseIcon />
@@ -308,7 +319,7 @@ export function IslandShell(props: IslandShellProps) {
             <ApprovalCard approval={approval} approveEnabled={approveEnabled} disabled={isMorphing} onDecision={onDecision} />
           </motion.div>
         ) : state.mode === 'success' || state.mode === 'error' ? (
-          <motion.div key={`transient-${state.transientKind}`} className="island-content transient-view" {...contentTransition} transition={{ duration: motionDuration }}>
+          <motion.div key={`transient-${state.transientKind}`} className="island-content transient-view" {...fade}>
             <div className={`transient-symbol kind-${state.transientKind ?? 'approved'}`} aria-hidden="true">
               {state.transientKind === 'error' || state.transientKind === 'expired' || state.transientKind === 'cancelled' ? '!' : state.transientKind === 'denied' ? '×' : '✓'}
             </div>
@@ -322,36 +333,39 @@ export function IslandShell(props: IslandShellProps) {
             ) : null}
           </motion.div>
         ) : (
-          <motion.div key="peek" className="island-content overview-view" {...contentTransition} transition={{ duration: motionDuration, delay: settings.reducedMotion ? 0 : 0.07 }}>
+          <motion.div key="peek" className="island-content overview-view" {...fade}>
             <div className="panel-header" data-drag-region="true">
               <div className="header-agent">
                 <span className="header-mark-wrap"><AgentMark agentId={active.id} compact /><StatusDot status={active.status} /></span>
-                <span><strong>{active.label}</strong><small>{active.activityLabel || 'Ready'}</small></span>
+                <span><strong>{active.label}</strong></span>
               </div>
-              <AgentTabs agents={AGENT_ORDER.map((id) => state.agents[id])} activeAgentId={state.activeAgentId} onSelect={onSelectAgent} />
               <div className="panel-actions">
-                {hasApproval ? <span className="pending-chip">{queueCount} pending</span> : null}
+                {hasApproval ? <span className="pending-chip">{queueCount}</span> : null}
                 <button type="button" className="icon-button" data-no-drag="true" onClick={() => onOpenTerminal(active.id)} disabled={!active.available} aria-label={`Open ${active.label} terminal`}><TerminalIcon /></button>
                 <button type="button" className="icon-button" data-no-drag="true" onClick={onOpenSettings} aria-label="Open settings"><GearIcon /></button>
                 <button type="button" className="icon-button" data-no-drag="true" onClick={onCollapse} aria-label="Collapse"><CloseIcon /></button>
               </div>
             </div>
 
-            <div className={`agent-status-card status-${active.status}`}>
-              <span className="status-activity"><ActivityGlyph waiting={active.status === 'waiting'} /></span>
-              <span className="agent-status-copy"><strong>{statusHeadline(active)}</strong><small>{statusDescription(active)}</small></span>
+            <div className="overview-body">
+              <span className="overview-status">
+                {showsActivity(active.status) ? <ActivityGlyph waiting={active.status === 'waiting'} /> : null}
+                <strong>{statusHeadline(active)}</strong>
+              </span>
+              <small>{statusDescription(active)}</small>
+              {settings.developerDiagnostics ? (
+                <span className="diagnostics-row">
+                  <span>{active.integrationMode}</span>
+                  <span>{active.version || 'version unavailable'}</span>
+                  <span>{statusNote}</span>
+                </span>
+              ) : null}
             </div>
 
-            {settings.developerDiagnostics ? (
-              <div className="diagnostics-row">
-                <span>{active.integrationMode}</span>
-                <span>{active.version || 'version unavailable'}</span>
-                <span>{statusNote}</span>
-              </div>
-            ) : null}
+            <AgentTabs agents={AGENT_ORDER.map((id) => state.agents[id])} activeAgentId={state.activeAgentId} onSelect={onSelectAgent} />
           </motion.div>
         )}
       </AnimatePresence>
-    </motion.section>
+    </section>
   )
 }

@@ -15,6 +15,7 @@ import type { AgentDiscoveryResult, DiscoveredAgent } from './agents/discover'
 import { PtyManager, shellHomeCwd } from './agents/process-manager'
 import { ApprovalBridgeWatcher, writeDecision } from './agents/approval-bridge'
 import {
+  flushPersistedStore,
   getDisplayLayout,
   getSettings,
   loadPersistedStore,
@@ -53,9 +54,8 @@ const DOCK_ZONE_WIDTH = 96
 const HOME_TOP_GAP = 12
 const HOME_SNAP_VERTICAL = 64
 const HOME_SNAP_HORIZONTAL = 150
-const WINDOW_SHAPE_INSET = 5
-const MIN_ISLAND_WIDTH = 48
-const MIN_ISLAND_HEIGHT = 48
+const MIN_ISLAND_WIDTH = 32
+const MIN_ISLAND_HEIGHT = 32
 const MAX_ISLAND_WIDTH = 1200
 const MAX_ISLAND_HEIGHT = 900
 const APPROVAL_DECISIONS: ApprovalDecision[] = ['once', 'session', 'always', 'deny']
@@ -76,67 +76,15 @@ function isApprovalDecision(value: unknown): value is ApprovalDecision {
   return APPROVAL_DECISIONS.includes(value as ApprovalDecision)
 }
 
-interface ShapeRect {
-  x: number
-  y: number
-  width: number
-  height: number
-}
-
-type ShapeCapableWindow = BrowserWindow & {
-  setShape?: (rectangles: ShapeRect[]) => void
-}
-
-function roundedWindowShape(width: number, height: number): ShapeRect[] {
-  const x0 = WINDOW_SHAPE_INSET
-  const y0 = WINDOW_SHAPE_INSET
-  const innerWidth = Math.max(1, width - WINDOW_SHAPE_INSET * 2)
-  const innerHeight = Math.max(1, height - WINDOW_SHAPE_INSET * 2)
-  const panelRadius = innerHeight <= 82 ? Math.floor(innerHeight / 2) : 25
-  const radius = Math.max(1, Math.min(panelRadius, Math.floor(innerHeight / 2)))
-  const rows: ShapeRect[] = []
-
-  for (let y = 0; y < innerHeight; y += 1) {
-    let inset = 0
-    if (y < radius) {
-      const dy = radius - y - 0.5
-      inset = Math.ceil(radius - Math.sqrt(Math.max(0, radius * radius - dy * dy)))
-    } else if (y >= innerHeight - radius) {
-      const dy = y - (innerHeight - radius) + 0.5
-      inset = Math.ceil(radius - Math.sqrt(Math.max(0, radius * radius - dy * dy)))
-    }
-
-    const row: ShapeRect = {
-      x: x0 + inset,
-      y: y0 + y,
-      width: Math.max(1, innerWidth - inset * 2),
-      height: 1
-    }
-    const previous = rows.at(-1)
-    if (
-      previous &&
-      previous.x === row.x &&
-      previous.width === row.width &&
-      previous.y + previous.height === row.y
-    ) {
-      previous.height += 1
-    } else {
-      rows.push(row)
-    }
-  }
-
-  return rows
-}
-
-function applyWindowShape(width: number, height: number): void {
-  if (!mainWindow || process.platform === 'darwin') return
-  const win = mainWindow as ShapeCapableWindow
-  try {
-    win.setShape?.(roundedWindowShape(width, height))
-  } catch (error) {
-    console.warn('Unable to apply native island shape:', error)
-  }
-}
+/**
+ * The island's silhouette is drawn by CSS `border-radius` on a transparent,
+ * per-pixel-alpha window. Earlier versions also clipped the native HWND with
+ * `BrowserWindow.setShape()`; that region is a list of 1px scanlines with no
+ * anti-aliasing, so it re-cut every rounded corner into a hard staircase and
+ * fought the (correctly anti-aliased) CSS radius underneath it. The shape only
+ * existed to hide a `backdrop-filter` artefact that no longer applies — the
+ * surface is opaque black now — so there is no native mask any more.
+ */
 
 function displayForWindow(width: number, height: number) {
   if (mainWindow) {
@@ -223,10 +171,6 @@ function saveCurrentLayout(): void {
   })
 }
 
-function easeInOutCubic(t: number): number {
-  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
-}
-
 function cancelBoundsAnimation(): void {
   boundsAnimationToken += 1
   isAnimatingBounds = false
@@ -239,55 +183,107 @@ interface IslandBounds {
   height: number
 }
 
-async function animateIslandTo(target: IslandBounds, preferredDuration?: number): Promise<boolean> {
+/**
+ * Critically damped spring, integrated at a fixed sub-step so the result is
+ * identical regardless of how late a frame lands. `zeta = 1` means it settles
+ * without overshoot, which is what a morphing container should do — an
+ * under-damped spring makes the pill look like it bounces off its own edges.
+ *
+ * This is the *only* geometry animation in the app. The renderer no longer
+ * springs the surface as well; it just cross-fades its contents, so the frame
+ * the user sees is always exactly the OS window.
+ */
+const SPRING_OMEGA = 22
+const SPRING_SUB_STEP = 1 / 240
+/** Snap once within a pixel: the last pixel takes as long as the first fifty. */
+const SPRING_EPSILON = 0.9
+
+interface SpringAxis {
+  value: number
+  velocity: number
+  target: number
+}
+
+function stepSpringAxis(axis: SpringAxis, dt: number): void {
+  const displacement = axis.value - axis.target
+  const acceleration = -SPRING_OMEGA * SPRING_OMEGA * displacement - 2 * SPRING_OMEGA * axis.velocity
+  axis.velocity += acceleration * dt
+  axis.value += axis.velocity * dt
+}
+
+function axisSettled(axis: SpringAxis): boolean {
+  return Math.abs(axis.value - axis.target) < SPRING_EPSILON && Math.abs(axis.velocity) < SPRING_EPSILON * SPRING_OMEGA
+}
+
+async function animateIslandTo(target: IslandBounds): Promise<boolean> {
   if (!mainWindow) return false
   const start = mainWindow.getBounds()
-  const settings = getSettings()
-  const duration = settings.reducedMotion
-    ? 0
-    : preferredDuration ?? (target.height > start.height ? 290 : 235)
   const token = ++boundsAnimationToken
 
-  if (duration === 0) {
+  const unchanged =
+    start.x === target.x &&
+    start.y === target.y &&
+    start.width === target.width &&
+    start.height === target.height
+
+  if (unchanged || getSettings().reducedMotion) {
     mainWindow.setBounds(target, false)
-    applyWindowShape(target.width, target.height)
     windowAnchor = { x: target.x, y: target.y }
     saveCurrentLayout()
     return true
   }
 
   isAnimatingBounds = true
-  const started = Date.now()
+  const axes: SpringAxis[] = [
+    { value: start.x, velocity: 0, target: target.x },
+    { value: start.y, velocity: 0, target: target.y },
+    { value: start.width, velocity: 0, target: target.width },
+    { value: start.height, velocity: 0, target: target.height }
+  ]
+  let previous = Date.now()
 
   return await new Promise<boolean>((resolve) => {
     const step = () => {
-      if (!mainWindow || token !== boundsAnimationToken) {
-        isAnimatingBounds = false
+      if (!mainWindow || mainWindow.isDestroyed() || token !== boundsAnimationToken) {
+        if (token === boundsAnimationToken) isAnimatingBounds = false
         resolve(false)
         return
       }
 
-      const progress = clamp((Date.now() - started) / duration, 0, 1)
-      const eased = easeInOutCubic(progress)
-      const next = {
-        x: Math.round(start.x + (target.x - start.x) * eased),
-        y: Math.round(start.y + (target.y - start.y) * eased),
-        width: Math.round(start.width + (target.width - start.width) * eased),
-        height: Math.round(start.height + (target.height - start.height) * eased)
-      }
-      mainWindow.setBounds(next, false)
-      applyWindowShape(next.width, next.height)
+      const now = Date.now()
+      // Clamp so a stalled main process (GC, a slow IPC handler) replays at most
+      // a tenth of a second of physics instead of teleporting the window.
+      const frame = Math.min((now - previous) / 1000, 0.1)
+      previous = now
 
-      if (progress >= 1) {
+      let remaining = frame
+      while (remaining > 0) {
+        const dt = Math.min(remaining, SPRING_SUB_STEP)
+        for (const axis of axes) stepSpringAxis(axis, dt)
+        remaining -= dt
+      }
+
+      const settled = axes.every(axisSettled)
+      const next = settled
+        ? target
+        : {
+            x: Math.round(axes[0].value),
+            y: Math.round(axes[1].value),
+            width: Math.round(axes[2].value),
+            height: Math.round(axes[3].value)
+          }
+      mainWindow.setBounds(next, false)
+
+      if (settled) {
         isAnimatingBounds = false
         windowAnchor = { x: target.x, y: target.y }
         saveCurrentLayout()
         resolve(true)
         return
       }
-      setTimeout(step, 16)
+      setTimeout(step, 8)
     }
-    step()
+    setTimeout(step, 0)
   })
 }
 
@@ -311,7 +307,7 @@ async function returnIslandHome(notifyRenderer = true): Promise<IslandWindowLayo
   showIsland()
   dockSide = null
   const bounds = mainWindow.getBounds()
-  await animateIslandTo(homeBounds(bounds.width, bounds.height), 320)
+  await animateIslandTo(homeBounds(bounds.width, bounds.height))
   if (notifyRenderer) mainWindow.webContents.send('island:return-home')
   return currentLayout()
 }
@@ -370,7 +366,7 @@ async function finishIslandDrag(): Promise<IslandWindowLayout> {
     } else {
       dockSide = leftDistance <= rightDistance ? 'left' : 'right'
     }
-    await animateIslandTo(getIslandBounds(bounds.width, bounds.height), 210)
+    await animateIslandTo(getIslandBounds(bounds.width, bounds.height))
   } else {
     dockSide = null
     saveCurrentLayout()
@@ -390,10 +386,7 @@ function applySettingsSideEffects(previous: IslandSettings, next: IslandSettings
     dockSide = next.preferredDockSide
     const bounds = mainWindow?.getBounds()
     if (bounds && mainWindow) {
-      const snapped = getIslandBounds(bounds.width, bounds.height)
-      mainWindow.setBounds(snapped, false)
-      applyWindowShape(snapped.width, snapped.height)
-      saveCurrentLayout()
+      void animateIslandTo(getIslandBounds(bounds.width, bounds.height))
     }
   }
   rebuildTrayMenu()
@@ -407,14 +400,27 @@ function updateAppSettings(patch: Partial<IslandSettings>): IslandSettings {
   return next
 }
 
-function showIsland(): void {
-  if (!mainWindow) return
-  mainWindow.showInactive()
+/**
+ * `focus` is not cosmetic. "Click outside to collapse" is driven by the
+ * window's `blur` event, and a window that never held focus never blurs — so
+ * anything raised with `showInactive()` alone (an approval arriving while you
+ * work in your editor) used to expand and then ignore every click elsewhere on
+ * screen. Anything that demands a decision takes focus so that dismissing it
+ * works; ambient state changes stay inactive and out of the way.
+ */
+function showIsland(options: { focus?: boolean } = {}): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  if (options.focus) {
+    mainWindow.show()
+    mainWindow.focus()
+  } else {
+    mainWindow.showInactive()
+  }
   mainWindow.moveTop()
 }
 
 function showSettingsPanel(): void {
-  showIsland()
+  showIsland({ focus: true })
   mainWindow?.webContents.send('island:open-settings')
 }
 
@@ -435,7 +441,7 @@ function rebuildTrayMenu(): void {
   const settings = getSettings()
   tray.setContextMenu(
     Menu.buildFromTemplate([
-      { label: 'Open Agent Island', click: showIsland },
+      { label: 'Open Agent Island', click: () => showIsland({ focus: true }) },
       { label: 'Settings…', click: showSettingsPanel },
       {
         label: 'Return to top centre',
@@ -681,8 +687,12 @@ function createWindow(): void {
   }
 
   mainWindow.once('ready-to-show', () => {
-    applyWindowShape(initial.width, initial.height)
-    mainWindow?.showInactive()
+    // Approvals that were already pending when the app launched are restored by
+    // the renderer, not by a `raised` event, so they would otherwise open an
+    // expanded panel on a window that has never held focus — and "click outside
+    // to collapse" rides on `blur`.
+    const restoringApproval = bridgeWatcher.list().length > 0 && getSettings().autoExpandApprovals
+    showIsland({ focus: restoringApproval })
   })
 
   mainWindow.on('closed', () => {
@@ -815,7 +825,9 @@ function registerIpc(): void {
 
 function wireBridgeEvents(): void {
   bridgeWatcher.on('raised', (request) => {
-    showIsland()
+    // Only steal focus when the island is actually going to open in front of
+    // the user; with auto-expand off it just updates a count in the pill.
+    showIsland({ focus: getSettings().autoExpandApprovals })
     mainWindow?.webContents.send('island:approval', request)
   })
   bridgeWatcher.on('cleared', (request) => {
@@ -828,7 +840,7 @@ function wirePtyEvents(): void {
   ptyManager.on('exit', (payload) => sendToRenderer('pty:exit', payload))
   ptyManager.on('session', (payload) => sendToRenderer('pty:session', payload))
   ptyManager.on('approval', (request) => {
-    showIsland()
+    showIsland({ focus: getSettings().autoExpandApprovals })
     mainWindow?.webContents.send('island:approval', request)
   })
   ptyManager.on('approval-cleared', (request) => {
@@ -838,7 +850,9 @@ function wirePtyEvents(): void {
     sendToRenderer('island:approval-answered', payload)
   })
   ptyManager.on('terminal-input', (request: TerminalInputPrompt) => {
-    showIsland()
+    // The renderer always opens the handoff panel for these, so it is always
+    // a foreground interaction.
+    showIsland({ focus: true })
     mainWindow?.webContents.send('island:terminal-input', request)
   })
   ptyManager.on('terminal-input-cleared', (request: TerminalInputPrompt) => {
@@ -847,7 +861,23 @@ function wirePtyEvents(): void {
 }
 
 
-app.whenReady().then(async () => {
+/**
+ * Two copies of Agent Island share one userData directory, one settings file,
+ * one approval-bridge folder and one set of global shortcuts. Both would watch
+ * the same pending approvals and either could write the decision, so a second
+ * launch surfaces the existing island instead of starting a rival one.
+ */
+const hasInstanceLock = app.requestSingleInstanceLock()
+
+if (!hasInstanceLock) {
+  app.quit()
+}
+
+app.on('second-instance', () => {
+  showIsland({ focus: true })
+})
+
+async function bootstrap(): Promise<void> {
   loadPersistedStore()
   registerIpc()
   wireBridgeEvents()
@@ -868,19 +898,30 @@ app.whenReady().then(async () => {
     void returnIslandHome()
   })
 
-  screen.on('display-metrics-changed', () => {
-    const bounds = mainWindow?.getBounds()
-    if (!bounds || !mainWindow) return
-    const next = getIslandBounds(bounds.width, bounds.height)
-    mainWindow.setBounds(next, false)
-    applyWindowShape(next.width, next.height)
-  })
+  // Resolution changes, DPI changes and hot-plugged monitors can all leave the
+  // island parked outside every work area. Re-clamp against whatever displays
+  // exist now rather than trusting the stored anchor.
+  const reconcileToDisplays = () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return
+    cancelBoundsAnimation()
+    const bounds = mainWindow.getBounds()
+    mainWindow.setBounds(getIslandBounds(bounds.width, bounds.height), false)
+    saveCurrentLayout()
+  }
+
+  screen.on('display-metrics-changed', reconcileToDisplays)
+  screen.on('display-added', reconcileToDisplays)
+  screen.on('display-removed', reconcileToDisplays)
 
   app.on('activate', () => {
     if (!mainWindow || mainWindow.isDestroyed()) createWindow()
     else showIsland()
   })
-})
+}
+
+if (hasInstanceLock) {
+  void app.whenReady().then(bootstrap)
+}
 
 let isQuitting = false
 
@@ -892,6 +933,7 @@ app.on('before-quit', (event: { preventDefault(): void }) => {
   tray?.destroy()
   tray = null
   bridgeWatcher.stop()
+  flushPersistedStore()
   void ptyManager.stopAll().finally(() => app.exit(0))
 })
 

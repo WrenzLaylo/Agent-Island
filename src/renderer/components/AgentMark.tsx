@@ -20,7 +20,6 @@ export function AgentMark({ agentId, compact = false, mini = false, className = 
       aria-hidden="true"
     >
       <span className="agent-glyph">{glyphs[agentId]}</span>
-      <span className="mark-sheen" />
     </span>
   )
 }

@@ -1,22 +1,58 @@
+/*
+ * Agent Island — shell styles.
+ *
+ * One black surface, one hairline, no glass and no gradients. Hierarchy comes
+ * from type, spacing and a single separator weight. Everything below draws from
+ * the token block; if a value is not a token it is a bug, not a decision.
+ */
+
 :root {
   color-scheme: dark;
-  font-family: "Segoe UI Variable Text", "Segoe UI Variable", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+
+  /* Type — five steps, nothing below 11px. */
+  --fs-xl: 17px;
+  --fs-lg: 15px;
+  --fs-md: 13px;
+  --fs-sm: 12px;
+  --fs-xs: 11px;
+
+  /* Radius — three steps plus full. */
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 18px;
+  --r-full: 999px;
+
+  /* Space — 4px grid. */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 20px;
+
+  /* Ink */
+  --text: #f2f2f4;
+  --text-2: rgba(255, 255, 255, 0.6);
+  --text-3: rgba(255, 255, 255, 0.4);
+
+  /* Structure */
+  --edge: rgba(255, 255, 255, 0.12);
+  --rule: rgba(255, 255, 255, 0.08);
+  --raise: #0b0b0b;
+  --raise-hover: #151515;
+
+  /* Semantics */
+  --amber: #f0b45f;
+  --amber-ink: #241704;
+  --green: #5fd39a;
+  --blue: #7fb2ff;
+  --red: #ff7b80;
+
+  --motion: 160ms;
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+
+  font-family: "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  font-variation-settings: "opsz" 14;
-  --glass-alpha: 0.74;
-  --text: rgba(255, 255, 255, 0.96);
-  --secondary: rgba(255, 255, 255, 0.58);
-  --tertiary: rgba(255, 255, 255, 0.36);
-  --hairline: rgba(255, 255, 255, 0.09);
-  --hairline-strong: rgba(255, 255, 255, 0.14);
-  --surface-soft: rgba(255, 255, 255, 0.055);
-  --surface-hover: rgba(255, 255, 255, 0.085);
-  --amber: #f3b85d;
-  --amber-soft: rgba(243, 184, 93, 0.14);
-  --green: #69d49b;
-  --red: #ff7d82;
-  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  -webkit-font-smoothing: antialiased;
 }
 
 * {
@@ -50,10 +86,24 @@ button {
 
 button:focus-visible,
 input:focus-visible,
-select:focus-visible {
-  outline: 2px solid rgba(255, 255, 255, 0.68);
+select:focus-visible,
+[role="switch"]:focus-visible {
+  outline: 2px solid var(--text);
   outline-offset: 2px;
 }
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* ── Stage ─────────────────────────────────────────────────────────────────
+   The OS window is exactly the island: no padding, no inset, no native mask.
+   CSS owns the silhouette so every corner is anti-aliased by the compositor. */
 
 .stage,
 .island-frame {
@@ -65,7 +115,6 @@ select:focus-visible {
 .stage {
   display: grid;
   place-items: center;
-  padding: 5px;
 }
 
 .stage.is-dragging,
@@ -73,94 +122,26 @@ select:focus-visible {
   cursor: grabbing !important;
 }
 
-.island-frame {
-  inset: 5px;
-}
-
 .fill {
   width: auto;
   height: auto;
 }
+
+/* ── Surface ─────────────────────────────────────────────────────────────── */
 
 .island-surface {
   position: relative;
   width: 100%;
   height: 100%;
   overflow: hidden;
+  border: 1px solid var(--edge);
   color: var(--text);
-  border: 1px solid var(--hairline);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.012) 38%, rgba(0, 0, 0, 0.075)),
-    rgba(10, 10, 12, var(--glass-alpha));
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.11),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.34),
-    0 1px 1px rgba(0, 0, 0, 0.22);
-  backdrop-filter: blur(26px) saturate(1.2);
-  -webkit-backdrop-filter: blur(26px) saturate(1.2);
-  isolation: isolate;
-}
-
-.island-surface.is-quiet-idle {
-  border-color: transparent;
   background: #000;
-  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.34);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-}
-
-.island-surface.is-quiet-idle::after {
-  display: none;
-}
-
-.island-surface.is-quiet-idle .compact-button:hover,
-.island-surface.is-quiet-idle .dock-button:hover {
-  background: transparent;
-}
-
-.quiet-idle-hit-area {
-  display: block;
-  width: 100%;
-  height: 100%;
-}
-
-/* Chromium backdrop filtering can reveal the rectangular transparent HWND on
-   some Windows GPU/scale combinations. Keep the native mask and simulate the
-   glass with layered translucency there instead of risking the old grey box. */
-.stage[data-platform="win32"] .island-surface {
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.018) 40%, rgba(0, 0, 0, 0.1)),
-    rgba(13, 13, 16, calc(var(--glass-alpha) + 0.12));
-}
-
-.stage[data-platform="win32"] .island-surface.is-quiet-idle {
-  background: #000;
-}
-
-.attention-flash {
-  position: absolute;
-  z-index: 4;
-  inset: 1px;
-  pointer-events: none;
-  border: 1px solid rgba(243, 184, 93, 0.72);
-  border-radius: inherit;
-  box-shadow: inset 0 0 0 1px rgba(243, 184, 93, 0.12);
-}
-
-.island-surface::after {
-  content: "";
-  position: absolute;
-  z-index: -1;
-  inset: 0;
-  pointer-events: none;
-  border-radius: inherit;
-  background: radial-gradient(120% 85% at 50% -20%, rgba(255, 255, 255, 0.08), transparent 56%);
+  font-size: var(--fs-md);
 }
 
 .island-surface.view-compact {
-  border-radius: 999px;
+  border-radius: var(--r-full);
 }
 
 .island-surface.view-dock {
@@ -168,90 +149,89 @@ select:focus-visible {
 }
 
 .island-surface:not(.view-compact):not(.view-dock) {
-  border-radius: 24px;
+  border-radius: var(--r-lg);
+}
+
+/* Idle is meant to be almost invisible: a black shape with no outline at all. */
+.island-surface.is-quiet-idle {
+  border-color: transparent;
+}
+
+.island-surface.view-dock.is-quiet-idle {
+  border-color: var(--rule);
 }
 
 .island-surface.has-attention {
-  border-color: rgba(243, 184, 93, 0.34);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.12),
-    inset 0 0 0 1px rgba(243, 184, 93, 0.08),
-    0 1px 1px rgba(0, 0, 0, 0.2);
+  border-color: rgba(240, 180, 95, 0.45);
 }
 
+/* Controls are inert while the window is still resizing so a click cannot land
+   on a button that is about to move out from under the pointer. */
 .island-surface.is-morphing [data-no-drag="true"] {
   pointer-events: none;
 }
 
-.island-content {
+.attention-flash {
+  position: absolute;
+  z-index: 4;
+  inset: 0;
+  pointer-events: none;
+  border: 1px solid var(--amber);
+  border-radius: inherit;
+}
+
+/* Views overlap while cross-fading rather than queueing exit-then-enter. */
+.island-content,
+.compact-button,
+.dock-button {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
 }
 
-/* Agent marks */
+/* ── Primitives ──────────────────────────────────────────────────────────── */
+
 .agent-mark {
-  position: relative;
   display: inline-flex;
-  flex: 0 0 38px;
-  width: 38px;
-  height: 38px;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
   align-items: center;
   justify-content: center;
-  overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.065);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-sm);
+  color: var(--text);
+  background: var(--raise);
 }
 
 .agent-mark.mark-compact {
-  width: 32px;
-  height: 32px;
-  flex-basis: 32px;
-  border-radius: 11px;
+  width: 26px;
+  height: 26px;
+  flex-basis: 26px;
 }
 
 .agent-mark.mark-mini {
-  width: 18px;
-  height: 18px;
-  flex-basis: 18px;
+  width: 20px;
+  height: 20px;
+  flex-basis: 20px;
   border-radius: 6px;
 }
 
+/* Identity lives in the glyph colour only. The tile stays black so three agents
+   side by side read as one control, not three coloured badges. */
+.agent-mark-claude .agent-glyph { color: #e2896a; }
+.agent-mark-codex .agent-glyph { color: #6fc79b; }
+.agent-mark-hermes .agent-glyph { color: #a794f0; }
+
 .agent-glyph {
-  position: relative;
-  z-index: 1;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   line-height: 1;
-  letter-spacing: -0.035em;
 }
 
 .mark-mini .agent-glyph {
-  font-size: 7px;
-}
-
-.agent-mark-claude {
-  color: #f4b18a;
-  background: linear-gradient(145deg, rgba(235, 126, 83, 0.2), rgba(255, 255, 255, 0.04));
-}
-
-.agent-mark-codex {
-  color: #a9e8c5;
-  background: linear-gradient(145deg, rgba(74, 179, 123, 0.19), rgba(255, 255, 255, 0.04));
-}
-
-.agent-mark-hermes {
-  color: #c9b9ff;
-  background: linear-gradient(145deg, rgba(122, 99, 209, 0.2), rgba(255, 255, 255, 0.04));
-}
-
-.mark-sheen {
-  position: absolute;
-  inset: 1px 6px auto;
-  height: 32%;
-  border-radius: 999px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.12), transparent);
+  font-size: 9px;
 }
 
 .status-dot {
@@ -260,54 +240,162 @@ select:focus-visible {
   height: 8px;
   flex: 0 0 8px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.3);
+  background: var(--text-3);
 }
 
-.status-idle,
-.status-completed {
-  background: var(--green);
+/* Scoped to `.status-dot` on purpose. `status-<state>` is a suffix shared with
+   other elements (the dock ring uses the same modifier), and unscoped
+   `background` rules leaked onto them — a docked island with a pending
+   approval rendered as a solid amber disc instead of a black orb with an
+   amber ring. */
+.status-dot.status-idle,
+.status-dot.status-completed { background: var(--green); }
+.status-dot.status-running,
+.status-dot.status-thinking { background: var(--blue); }
+.status-dot.status-waiting { background: var(--amber); }
+.status-dot.status-error { background: var(--red); }
+.status-dot.status-offline { background: rgba(255, 255, 255, 0.22); }
+
+.icon-button {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  color: var(--text-2);
+  background: transparent;
+  cursor: pointer;
+  transition: color var(--motion) var(--ease), background var(--motion) var(--ease);
 }
 
-.status-running,
-.status-thinking {
-  background: #8bbcff;
+.icon-button:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--raise-hover);
 }
 
-.status-waiting {
+.icon-button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.quiet-button,
+.primary-button,
+.permanent-button,
+.setting-action-button {
+  min-height: 30px;
+  padding: 0 var(--s-3);
+  border: 1px solid var(--edge);
+  border-radius: var(--r-sm);
+  color: var(--text);
+  background: var(--raise);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--motion) var(--ease);
+}
+
+.quiet-button:hover,
+.setting-action-button:hover {
+  background: var(--raise-hover);
+}
+
+.primary-button,
+.permanent-button {
+  border-color: transparent;
+  color: var(--amber-ink);
   background: var(--amber);
 }
 
-.status-error {
-  background: var(--red);
+.primary-button:hover:not(:disabled),
+.permanent-button:hover:not(:disabled) {
+  background: #f5c47c;
 }
 
-.status-offline {
-  background: rgba(255, 255, 255, 0.25);
+.permanent-button:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
-/* Compact pill */
+.pending-chip,
+.compact-count,
+.dock-badge,
+.agent-switch-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r-full);
+  color: var(--amber-ink);
+  background: var(--amber);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.pending-chip,
+.compact-count {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+}
+
+/* Three bars that read as "something is happening" without being a spinner. */
+.activity-glyph {
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+}
+
+.activity-glyph i {
+  display: block;
+  width: 2px;
+  border-radius: var(--r-full);
+  background: var(--blue);
+  animation: activity-bars 1.25s ease-in-out infinite;
+}
+
+.activity-glyph i:nth-child(1) { height: 6px; animation-delay: -0.28s; }
+.activity-glyph i:nth-child(2) { height: 11px; animation-delay: -0.08s; }
+.activity-glyph i:nth-child(3) { height: 7px; animation-delay: -0.4s; }
+.activity-glyph.is-waiting i { background: var(--amber); }
+
+@keyframes activity-bars {
+  0%, 100% { transform: scaleY(0.5); opacity: 0.5; }
+  50% { transform: scaleY(1); opacity: 1; }
+}
+
+/* ── Compact pill ────────────────────────────────────────────────────────── */
+
 .compact-button,
 .dock-button {
-  width: 100%;
-  height: 100%;
   margin: 0;
   padding: 0;
   border: 0;
   background: transparent;
   cursor: grab;
+  appearance: none;
 }
 
 .compact-button {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 10px 8px 8px;
+  gap: var(--s-2);
+  padding: 0 var(--s-3) 0 var(--s-2);
   border-radius: inherit;
   text-align: left;
 }
 
-.compact-button:hover {
-  background: rgba(255, 255, 255, 0.02);
+.quiet-idle-hit-area {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 .compact-leading {
@@ -318,11 +406,11 @@ select:focus-visible {
 
 .compact-leading .status-dot {
   position: absolute;
-  right: -1px;
-  bottom: -1px;
-  width: 10px;
-  height: 10px;
-  border: 2px solid rgba(11, 11, 13, 0.95);
+  right: -2px;
+  bottom: -2px;
+  width: 9px;
+  height: 9px;
+  border: 2px solid #000;
 }
 
 .compact-copy {
@@ -330,7 +418,7 @@ select:focus-visible {
   min-width: 0;
   flex: 1;
   flex-direction: column;
-  gap: 3px;
+  gap: 1px;
 }
 
 .compact-copy strong,
@@ -341,173 +429,119 @@ select:focus-visible {
 }
 
 .compact-copy strong {
-  font-size: 13px;
+  font-size: var(--fs-md);
   font-weight: 600;
-  letter-spacing: 0;
 }
 
 .compact-copy small {
-  color: var(--secondary);
-  font-size: 11px;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
 }
 
 .compact-trailing {
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
-  gap: 6px;
 }
 
-.compact-count,
-.dock-badge,
-.agent-switch-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 999px;
-  color: #271808;
-  background: var(--amber);
-  font-weight: 600;
-}
+/* ── Docked orb ──────────────────────────────────────────────────────────── */
 
-.compact-count {
-  min-width: 24px;
-  height: 24px;
-  padding: 0 7px;
-  font-size: 10px;
-}
-
-.compact-chevron {
-  display: inline-flex;
-  width: 24px;
-  height: 24px;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid rgba(255, 255, 255, 0.055);
-  border-radius: 50%;
-  color: var(--tertiary);
-  background: rgba(255, 255, 255, 0.04);
-}
-
-.activity-glyph {
-  display: inline-flex;
-  width: 28px;
-  height: 26px;
-  align-items: center;
-  justify-content: center;
-  gap: 2px;
-}
-
-.activity-glyph i {
-  display: block;
-  width: 2px;
-  border-radius: 999px;
-  background: rgba(184, 209, 255, 0.82);
-  animation: activity-bars 1.25s ease-in-out infinite;
-}
-
-.activity-glyph i:nth-child(1) { height: 7px; animation-delay: -0.28s; }
-.activity-glyph i:nth-child(2) { height: 12px; animation-delay: -0.08s; }
-.activity-glyph i:nth-child(3) { height: 8px; animation-delay: -0.4s; }
-.activity-glyph.is-waiting i { background: var(--amber); }
-
-@keyframes activity-bars {
-  0%, 100% { transform: scaleY(0.55); opacity: 0.5; }
-  50% { transform: scaleY(1); opacity: 1; }
-}
-
-/* Docked circle */
 .dock-button {
-  position: relative;
   display: grid;
   place-items: center;
   border-radius: 50%;
 }
 
-.dock-button .agent-mark {
-  width: 38px;
-  height: 38px;
-  flex-basis: 38px;
-  border-radius: 14px;
-}
-
+/* The ring *is* the status indicator — it is not a second ring drawn around a
+   mark of the same diameter, which is what made the docked state look cramped. */
 .dock-status-ring {
   position: absolute;
-  inset: 7px;
-  border: 1.5px solid rgba(255, 255, 255, 0.13);
+  inset: 2px;
+  border: 1.5px solid transparent;
   border-radius: 50%;
+  background: none;
 }
 
 .dock-status-ring.status-running,
 .dock-status-ring.status-thinking {
-  border-color: rgba(139, 188, 255, 0.7);
+  border-color: var(--blue);
   border-top-color: transparent;
-  animation: dock-spin 1.7s linear infinite;
+  animation: dock-spin 1.6s linear infinite;
 }
 
 .dock-status-ring.status-waiting {
-  border-color: rgba(243, 184, 93, 0.82);
+  border-color: var(--amber);
   animation: dock-breathe 1.5s ease-in-out infinite;
 }
 
-.dock-status-ring.status-error {
-  border-color: rgba(255, 125, 130, 0.78);
-}
-
-.dock-badge {
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  min-width: 18px;
-  height: 18px;
-  padding: 0 5px;
-  border: 2px solid rgba(11, 11, 13, 0.94);
-  font-size: 9px;
-}
+.dock-status-ring.status-error { border-color: var(--red); }
+.dock-status-ring.status-idle,
+.dock-status-ring.status-completed { border-color: rgba(95, 211, 154, 0.5); }
 
 @keyframes dock-spin { to { transform: rotate(360deg); } }
-@keyframes dock-breathe { 50% { opacity: 0.44; transform: scale(0.94); } }
+@keyframes dock-breathe { 50% { opacity: 0.45; } }
 
-/* Shared panel structure */
-.panel-header {
-  display: flex;
-  min-height: 58px;
-  align-items: center;
-  gap: 10px;
-  padding: 12px 13px 10px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.065);
+/* Sits *inside* the disc. Anchored to the bounding box corner it was sliced in
+   half by the circular surface clip, because a circle has no corner there. At
+   6px inset a 14px round badge is tangent to a 48px orb. */
+.dock-badge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  font-size: 9px;
+  line-height: 1;
 }
 
+/* ── Panel chrome ────────────────────────────────────────────────────────── */
+
+.panel-header {
+  display: flex;
+  min-height: 48px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--s-2);
+  padding: 0 var(--s-2) 0 var(--s-3);
+  border-bottom: 1px solid var(--rule);
+}
+
+/* Title-only headers (settings, onboarding). */
 .panel-header > div:first-child:not(.header-agent) {
   display: flex;
   min-width: 0;
   flex: 1;
   flex-direction: column;
-  gap: 3px;
+  gap: 1px;
 }
 
 .panel-header > div:first-child:not(.header-agent) strong {
-  font-size: 14px;
+  font-size: var(--fs-md);
+  font-weight: 600;
 }
 
 .panel-header > div:first-child:not(.header-agent) small {
-  color: var(--secondary);
-  font-size: 11px;
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .header-agent {
   display: flex;
-  min-width: 118px;
-  flex: 1 1 auto;
+  min-width: 0;
+  flex: 1;
   align-items: center;
-  gap: 9px;
+  gap: var(--s-2);
 }
 
 .header-agent > span:last-child {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
 }
 
 .header-agent strong,
@@ -518,13 +552,13 @@ select:focus-visible {
 }
 
 .header-agent strong {
-  font-size: 13px;
+  font-size: var(--fs-md);
   font-weight: 600;
 }
 
 .header-agent small {
-  color: var(--secondary);
-  font-size: 10px;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
 }
 
 .header-mark-wrap {
@@ -539,63 +573,25 @@ select:focus-visible {
   bottom: -2px;
   width: 9px;
   height: 9px;
-  border: 2px solid rgba(11, 11, 13, 0.95);
+  border: 2px solid #000;
 }
 
 .panel-actions {
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
-  gap: 5px;
+  gap: var(--s-1);
 }
 
-.icon-button,
-.quiet-button {
-  border: 1px solid var(--hairline);
-  color: var(--secondary);
-  background: rgba(255, 255, 255, 0.045);
-  cursor: pointer;
-}
+/* ── Agent switcher ──────────────────────────────────────────────────────── */
 
-.icon-button {
-  display: inline-flex;
-  width: 30px;
-  height: 30px;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  border-radius: 50%;
-}
-
-.icon-button:hover,
-.quiet-button:hover {
-  color: var(--text);
-  background: var(--surface-hover);
-}
-
-.pending-chip {
-  display: inline-flex;
-  height: 24px;
-  align-items: center;
-  padding: 0 9px;
-  border: 1px solid rgba(243, 184, 93, 0.2);
-  border-radius: 999px;
-  color: #f3c77f;
-  background: rgba(243, 184, 93, 0.08);
-  font-size: 9px;
-  font-weight: 600;
-}
-
-/* Agent switcher */
 .agent-switcher {
-  display: inline-flex;
-  flex: 0 1 auto;
+  display: flex;
+  flex: 0 0 auto;
   align-items: center;
-  gap: 2px;
-  padding: 3px;
-  border: 1px solid rgba(255, 255, 255, 0.065);
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.035);
+  gap: var(--s-1);
+  padding: var(--s-2) var(--s-3);
+  border-top: 1px solid var(--rule);
 }
 
 .agent-switch {
@@ -603,102 +599,91 @@ select:focus-visible {
   display: inline-flex;
   height: 28px;
   align-items: center;
-  gap: 5px;
-  padding: 0 7px 0 5px;
-  border: 0;
-  border-radius: 9px;
-  color: var(--secondary);
+  gap: 6px;
+  padding: 0 var(--s-2);
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  color: var(--text-2);
   background: transparent;
   cursor: pointer;
+  transition: color var(--motion) var(--ease), background var(--motion) var(--ease);
 }
 
 .agent-switch:hover {
   color: var(--text);
+  background: var(--raise);
 }
 
 .agent-switch.is-active {
+  border-color: var(--rule);
   color: var(--text);
-  background: rgba(255, 255, 255, 0.09);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  background: var(--raise);
 }
 
 .agent-switch-label {
-  font-size: 9px;
-  font-weight: 600;
+  font-size: var(--fs-sm);
+  font-weight: 500;
 }
 
 .agent-switch .status-dot {
-  width: 5px;
-  height: 5px;
-  flex-basis: 5px;
+  width: 6px;
+  height: 6px;
+  flex-basis: 6px;
 }
 
 .agent-switch-badge {
   position: absolute;
-  top: -5px;
+  top: -4px;
   right: -4px;
-  min-width: 14px;
-  height: 14px;
+  min-width: 15px;
+  height: 15px;
   padding: 0 4px;
-  border: 1px solid rgba(10, 10, 12, 0.8);
-  font-size: 7px;
+  border: 2px solid #000;
+  font-size: 9px;
 }
 
-/* Overview */
+/* ── Overview ────────────────────────────────────────────────────────────── */
+
 .overview-view {
   display: flex;
   flex-direction: column;
 }
 
-.agent-status-card {
-  display: flex;
-  min-height: 92px;
-  flex: 1;
-  align-items: center;
-  gap: 12px;
-  margin: 10px 12px 12px;
-  padding: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  border-radius: 17px;
-  background: rgba(255, 255, 255, 0.035);
-}
-
-.status-activity {
-  display: grid;
-  width: 42px;
-  height: 42px;
-  flex: 0 0 42px;
-  place-items: center;
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.04);
-}
-
-.agent-status-copy {
+.overview-body {
   display: flex;
   min-width: 0;
+  flex: 1;
   flex-direction: column;
-  gap: 5px;
+  justify-content: center;
+  gap: var(--s-1);
+  padding: 0 var(--s-3);
 }
 
-.agent-status-copy strong {
-  font-size: 14px;
+.overview-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.overview-status strong {
+  font-size: var(--fs-xl);
   font-weight: 600;
+  letter-spacing: -0.01em;
 }
 
-.agent-status-copy small {
-  color: var(--secondary);
-  font-size: 11px;
+.overview-body > small {
+  color: var(--text-2);
+  font-size: var(--fs-sm);
   line-height: 1.4;
 }
 
 .diagnostics-row {
   display: flex;
-  gap: 8px;
-  padding: 0 12px 10px;
-  color: var(--tertiary);
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: 8px;
+  gap: var(--s-2);
+  margin-top: var(--s-1);
+  color: var(--text-3);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: var(--fs-xs);
 }
 
 .diagnostics-row span {
@@ -707,14 +692,11 @@ select:focus-visible {
   white-space: nowrap;
 }
 
-/* Approval */
+/* ── Approval ────────────────────────────────────────────────────────────── */
+
 .approval-view {
   display: flex;
   flex-direction: column;
-}
-
-.approval-panel-header {
-  flex: 0 0 auto;
 }
 
 .approval-card {
@@ -722,17 +704,17 @@ select:focus-visible {
   min-height: 0;
   flex: 1;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--s-3);
   overflow: auto;
-  padding: 11px 13px 13px;
+  padding: var(--s-3);
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
 }
 
 .approval-summary-row {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
+  gap: var(--s-2);
 }
 
 .approval-summary-copy {
@@ -740,61 +722,50 @@ select:focus-visible {
   min-width: 0;
   flex: 1;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
 }
 
 .approval-summary-copy strong {
-  font-size: 13px;
+  font-size: var(--fs-lg);
   font-weight: 600;
+  line-height: 1.25;
 }
 
 .approval-summary-copy small {
-  color: var(--secondary);
-  font-size: 10px;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
 }
 
 .risk-pill {
   display: inline-flex;
-  height: 23px;
+  height: 22px;
   flex: 0 0 auto;
   align-items: center;
-  padding: 0 8px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 999px;
-  font-size: 9px;
+  padding: 0 var(--s-2);
+  border-radius: var(--r-full);
+  font-size: var(--fs-xs);
   font-weight: 600;
 }
 
-.risk-pill.risk-low {
-  color: #96deb8;
-  background: rgba(105, 212, 155, 0.08);
-}
-
+.risk-pill.risk-low { color: var(--green); background: rgba(95, 211, 154, 0.12); }
 .risk-pill.risk-elevated,
-.risk-pill.risk-unknown {
-  color: #f1c679;
-  background: rgba(243, 184, 93, 0.09);
-}
-
-.risk-pill.risk-high {
-  color: #ff9b9f;
-  background: rgba(255, 125, 130, 0.09);
-}
+.risk-pill.risk-unknown { color: var(--amber); background: rgba(240, 180, 95, 0.12); }
+.risk-pill.risk-high { color: var(--red); background: rgba(255, 123, 128, 0.12); }
 
 .command-block {
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.075);
-  border-radius: 14px;
-  background: rgba(0, 0, 0, 0.18);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-md);
+  background: var(--raise);
 }
 
 .command-label {
   display: block;
-  padding: 8px 10px 0;
-  color: var(--tertiary);
-  font-size: 8px;
+  padding: var(--s-2) var(--s-3) 0;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
   font-weight: 600;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
@@ -802,10 +773,10 @@ select:focus-visible {
   max-height: 104px;
   margin: 0;
   overflow: auto;
-  padding: 7px 10px 10px;
-  color: rgba(255, 255, 255, 0.9);
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: 10px;
+  padding: 6px var(--s-3) var(--s-3);
+  color: var(--text);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: var(--fs-sm);
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
@@ -815,19 +786,19 @@ select:focus-visible {
 
 .approval-context {
   display: grid;
-  gap: 7px;
+  gap: var(--s-2);
 }
 
 .approval-context > div {
   display: grid;
-  grid-template-columns: 82px minmax(0, 1fr);
-  gap: 8px;
   align-items: start;
+  gap: var(--s-2);
+  grid-template-columns: 56px minmax(0, 1fr);
 }
 
 .approval-context span {
-  color: var(--tertiary);
-  font-size: 9px;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
 }
 
 .approval-context code,
@@ -835,176 +806,145 @@ select:focus-visible {
   min-width: 0;
   margin: 0;
   overflow: hidden;
-  color: var(--secondary);
-  font-size: 9px;
-  line-height: 1.35;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  line-height: 1.4;
   text-overflow: ellipsis;
 }
 
 .approval-context code {
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-family: ui-monospace, Consolas, monospace;
   white-space: nowrap;
 }
 
 .stale-warning {
-  padding: 9px 10px;
-  border: 1px solid rgba(255, 125, 130, 0.16);
-  border-radius: 11px;
-  color: #ffafb2;
-  background: rgba(255, 125, 130, 0.07);
-  font-size: 9px;
-  line-height: 1.4;
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid rgba(255, 123, 128, 0.28);
+  border-radius: var(--r-md);
+  color: var(--red);
+  background: rgba(255, 123, 128, 0.08);
+  font-size: var(--fs-xs);
+  line-height: 1.45;
 }
 
 .decision-list {
   display: grid;
-  gap: 7px;
+  gap: var(--s-2);
   margin-top: auto;
 }
 
 .decision-button {
   display: flex;
-  min-height: 52px;
+  min-height: 48px;
   align-items: center;
-  gap: 10px;
-  padding: 9px 11px;
-  border: 1px solid rgba(255, 255, 255, 0.075);
-  border-radius: 13px;
+  gap: var(--s-3);
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-md);
   color: var(--text);
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--raise);
   text-align: left;
   cursor: pointer;
+  transition: background var(--motion) var(--ease), border-color var(--motion) var(--ease);
 }
 
 .decision-button:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.075);
+  border-color: var(--edge);
+  background: var(--raise-hover);
 }
 
 .decision-button:disabled {
-  opacity: 0.42;
+  opacity: 0.4;
   cursor: not-allowed;
 }
 
-.decision-once {
-  border-color: rgba(105, 212, 155, 0.22);
-  background: rgba(105, 212, 155, 0.085);
-}
-
-.decision-deny {
-  border-color: rgba(255, 125, 130, 0.15);
-  color: #ffafb2;
-  background: rgba(255, 125, 130, 0.045);
-}
-
-.decision-always {
-  color: rgba(255, 255, 255, 0.76);
-}
+.decision-once { border-color: rgba(95, 211, 154, 0.32); }
+.decision-once .decision-icon { color: var(--green); }
+.decision-deny .decision-icon { color: var(--red); }
 
 .decision-icon {
   display: grid;
-  width: 30px;
-  height: 30px;
-  flex: 0 0 30px;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
   place-items: center;
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.06);
-  font-size: 14px;
+  border-radius: 6px;
+  color: var(--text-2);
+  background: rgba(255, 255, 255, 0.05);
+  font-size: var(--fs-md);
 }
 
 .decision-copy {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
 }
 
 .decision-copy strong {
-  font-size: 11px;
+  font-size: var(--fs-md);
   font-weight: 600;
 }
 
 .decision-copy small {
-  color: var(--secondary);
-  font-size: 9px;
-  line-height: 1.3;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  line-height: 1.35;
 }
 
 .permanent-confirmation {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--s-3);
   margin-top: auto;
-  padding: 12px;
-  border: 1px solid rgba(243, 184, 93, 0.18);
-  border-radius: 14px;
-  background: rgba(243, 184, 93, 0.07);
+  padding: var(--s-3);
+  border: 1px solid rgba(240, 180, 95, 0.3);
+  border-radius: var(--r-md);
+  background: rgba(240, 180, 95, 0.06);
 }
 
 .permanent-confirmation > div:first-child {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: var(--s-1);
 }
 
 .permanent-confirmation strong {
-  color: #f4d49e;
-  font-size: 12px;
+  color: var(--amber);
+  font-size: var(--fs-md);
 }
 
 .permanent-confirmation small {
-  color: rgba(255, 255, 255, 0.62);
-  font-size: 9px;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
   line-height: 1.45;
 }
 
 .permanent-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 7px;
+  gap: var(--s-2);
 }
 
-.quiet-button,
-.permanent-button,
-.primary-button {
-  min-height: 32px;
-  padding: 0 12px;
-  border-radius: 10px;
-  font-size: 10px;
-  font-weight: 600;
-}
+/* ── Transient ───────────────────────────────────────────────────────────── */
 
-.permanent-button,
-.primary-button {
-  border: 1px solid rgba(243, 184, 93, 0.26);
-  color: #2d1c08;
-  background: #e9b45f;
-  cursor: pointer;
-}
-
-.permanent-button:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
-/* Transient */
 .transient-view {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 15px;
+  gap: var(--s-3);
+  padding: var(--s-4);
 }
 
 .transient-symbol {
   display: grid;
-  width: 42px;
-  height: 42px;
-  flex: 0 0 42px;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
   place-items: center;
-  border: 1px solid rgba(105, 212, 155, 0.18);
-  border-radius: 14px;
-  color: #9be0bc;
-  background: rgba(105, 212, 155, 0.08);
-  font-size: 18px;
+  border-radius: var(--r-sm);
+  color: var(--green);
+  background: rgba(95, 211, 154, 0.12);
+  font-size: var(--fs-lg);
   font-weight: 600;
 }
 
@@ -1012,9 +952,8 @@ select:focus-visible {
 .transient-symbol.kind-error,
 .transient-symbol.kind-expired,
 .transient-symbol.kind-cancelled {
-  border-color: rgba(255, 125, 130, 0.16);
-  color: #ffacaf;
-  background: rgba(255, 125, 130, 0.07);
+  color: var(--red);
+  background: rgba(255, 123, 128, 0.12);
 }
 
 .transient-copy {
@@ -1022,11 +961,12 @@ select:focus-visible {
   min-width: 0;
   flex: 1;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
 }
 
 .transient-copy strong {
-  font-size: 13px;
+  font-size: var(--fs-md);
+  font-weight: 600;
 }
 
 .transient-copy small,
@@ -1037,111 +977,184 @@ select:focus-visible {
 }
 
 .transient-copy small {
-  color: var(--secondary);
-  font-size: 10px;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
 }
 
 .transient-copy em {
-  color: var(--tertiary);
-  font-size: 9px;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
   font-style: normal;
 }
 
-/* Onboarding */
+/* ── Terminal handoff ────────────────────────────────────────────────────── */
+
+.handoff-view {
+  display: flex;
+  flex-direction: column;
+}
+
+.handoff-body {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--s-3);
+  padding: var(--s-3);
+}
+
+.handoff-body > p {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.terminal-handoff-button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-3);
+  border: 1px solid var(--edge);
+  border-radius: var(--r-md);
+  color: var(--text);
+  background: var(--raise);
+  text-align: left;
+  cursor: pointer;
+  appearance: none;
+  transition: background var(--motion) var(--ease);
+}
+
+.terminal-handoff-button:hover:not(:disabled) {
+  background: var(--raise-hover);
+}
+
+.terminal-handoff-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.terminal-handoff-button > svg {
+  flex: 0 0 auto;
+  color: var(--text-2);
+}
+
+.terminal-handoff-button > span {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.terminal-handoff-button strong {
+  font-size: var(--fs-md);
+  font-weight: 600;
+}
+
+.terminal-handoff-button small {
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Onboarding ──────────────────────────────────────────────────────────── */
+
 .onboarding-view {
   display: flex;
   height: 100%;
   flex-direction: column;
   align-items: center;
-  padding: 25px 24px 20px;
+  padding: var(--s-5) var(--s-4) var(--s-4);
   text-align: center;
 }
 
 .onboarding-symbol {
   display: flex;
-  width: 92px;
-  height: 34px;
+  width: 72px;
+  height: 26px;
   align-items: center;
   justify-content: center;
-  gap: 5px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.055);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  gap: var(--s-1);
+  border: 1px solid var(--edge);
+  border-radius: var(--r-full);
 }
 
 .onboarding-symbol span {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.72);
+  background: var(--text);
 }
 
-.onboarding-symbol span:nth-child(2) { opacity: 0.62; }
-.onboarding-symbol span:nth-child(3) { opacity: 0.42; }
+.onboarding-symbol span:nth-child(2) { opacity: 0.6; }
+.onboarding-symbol span:nth-child(3) { opacity: 0.35; }
 
 .onboarding-copy {
   display: flex;
   flex-direction: column;
-  gap: 5px;
-  margin-top: 17px;
+  gap: var(--s-1);
+  margin-top: var(--s-4);
 }
 
 .onboarding-copy strong {
-  font-size: 18px;
+  font-size: var(--fs-xl);
+  font-weight: 600;
   letter-spacing: -0.01em;
 }
 
 .onboarding-copy p {
   margin: 0;
-  color: var(--secondary);
-  font-size: 11px;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
 }
 
 .onboarding-steps {
   display: grid;
   width: 100%;
-  gap: 7px;
-  margin: 20px 0 16px;
+  gap: var(--s-1);
+  margin: var(--s-4) 0;
   text-align: left;
 }
 
 .onboarding-steps > span {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 9px 10px;
-  border: 1px solid rgba(255, 255, 255, 0.065);
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.03);
+  gap: var(--s-3);
 }
 
 .onboarding-steps b {
   display: grid;
-  width: 22px;
-  height: 22px;
-  flex: 0 0 22px;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
   place-items: center;
-  border-radius: 8px;
-  color: rgba(255, 255, 255, 0.78);
-  background: rgba(255, 255, 255, 0.065);
-  font-size: 9px;
+  border-radius: 6px;
+  color: var(--text-2);
+  background: var(--raise);
+  font-size: var(--fs-xs);
 }
 
 .onboarding-steps small {
-  color: rgba(255, 255, 255, 0.68);
-  font-size: 10px;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
 }
 
 .onboarding-button {
   width: 100%;
-  min-height: 36px;
-  color: #111214;
-  background: rgba(255, 255, 255, 0.91);
-  border-color: rgba(255, 255, 255, 0.5);
+  min-height: 34px;
+  margin-top: auto;
 }
 
-/* Settings */
+/* ── Settings ────────────────────────────────────────────────────────────── */
+
 .settings-view {
   display: flex;
   height: 100%;
@@ -1152,26 +1165,22 @@ select:focus-visible {
   min-height: 0;
   flex: 1;
   overflow: auto;
-  padding: 10px 12px 4px;
+  padding: var(--s-2) var(--s-3);
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
 }
 
 .settings-group {
-  overflow: hidden;
-  margin-bottom: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.065);
-  border-radius: 15px;
-  background: rgba(255, 255, 255, 0.028);
+  margin-bottom: var(--s-4);
 }
 
 .settings-group h3 {
   margin: 0;
-  padding: 9px 11px 7px;
-  color: var(--tertiary);
-  font-size: 8px;
+  padding: var(--s-2) 0;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
   font-weight: 600;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
@@ -1180,11 +1189,11 @@ select:focus-visible {
 .setting-select,
 .setting-action {
   display: flex;
-  min-height: 54px;
+  min-height: 48px;
   align-items: center;
-  gap: 12px;
-  padding: 9px 11px;
-  border-top: 1px solid rgba(255, 255, 255, 0.055);
+  gap: var(--s-3);
+  padding: var(--s-2) 0;
+  border-top: 1px solid var(--rule);
 }
 
 .setting-row > span:first-child,
@@ -1202,68 +1211,51 @@ select:focus-visible {
 .setting-slider strong,
 .setting-select strong,
 .setting-action strong {
-  font-size: 10px;
-  font-weight: 600;
+  font-size: var(--fs-md);
+  font-weight: 500;
 }
 
 .setting-row small,
 .setting-slider small,
 .setting-select small,
 .setting-action small {
-  color: var(--secondary);
-  font-size: 8px;
-  line-height: 1.35;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  line-height: 1.4;
 }
 
 .toggle {
   position: relative;
-  width: 34px;
-  height: 20px;
-  flex: 0 0 34px;
+  width: 36px;
+  height: 22px;
+  flex: 0 0 36px;
   padding: 0;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--edge);
+  border-radius: var(--r-full);
+  background: var(--raise);
   cursor: pointer;
+  transition: background var(--motion) var(--ease), border-color var(--motion) var(--ease);
 }
 
 .toggle span {
   position: absolute;
   top: 2px;
   left: 2px;
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.72);
-  transition: transform 160ms var(--ease), background 160ms ease;
+  background: var(--text-2);
+  transition: transform var(--motion) var(--ease), background var(--motion) var(--ease);
 }
 
 .toggle.is-on {
-  border-color: rgba(105, 212, 155, 0.24);
-  background: rgba(105, 212, 155, 0.28);
+  border-color: transparent;
+  background: var(--green);
 }
 
 .toggle.is-on span {
   transform: translateX(14px);
-  background: #dff9ea;
-}
-
-.setting-action-button {
-  min-height: 30px;
-  flex: 0 0 auto;
-  padding: 0 10px;
-  border: 1px solid rgba(255, 255, 255, 0.11);
-  border-radius: 9px;
-  color: rgba(255, 255, 255, 0.84);
-  background: rgba(255, 255, 255, 0.06);
-  font-size: 9px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.setting-action-button:hover {
-  color: #fff;
-  background: rgba(255, 255, 255, 0.1);
+  background: #04170d;
 }
 
 .setting-slider {
@@ -1273,276 +1265,44 @@ select:focus-visible {
 .setting-slider input[type="range"] {
   width: 100%;
   height: 4px;
-  accent-color: rgba(255, 255, 255, 0.8);
+  accent-color: var(--text);
 }
 
 .setting-select select {
   max-width: 132px;
-  padding: 6px 8px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 9px;
+  padding: 6px var(--s-2);
+  border: 1px solid var(--edge);
+  border-radius: var(--r-sm);
   color: var(--text);
-  background: #202024;
-  font-size: 9px;
+  background: var(--raise);
+  font-size: var(--fs-sm);
 }
 
 .settings-footnote {
   margin: 0;
-  padding: 7px 12px 11px;
-  color: var(--tertiary);
-  font-size: 8px;
+  padding: var(--s-2) var(--s-3) var(--s-3);
+  border-top: 1px solid var(--rule);
+  color: var(--text-3);
+  font-size: var(--fs-xs);
   text-align: center;
 }
 
-/* Motion accessibility */
-.stage[data-reduced-motion="true"] * {
+/* ── Reduced motion ──────────────────────────────────────────────────────── */
+
+.stage[data-reduced-motion="true"] *,
+.stage[data-reduced-motion="true"] *::before,
+.stage[data-reduced-motion="true"] *::after {
   animation-duration: 1ms !important;
   animation-iteration-count: 1 !important;
   transition-duration: 1ms !important;
-  scroll-behavior: auto !important;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  * {
+  *,
+  *::before,
+  *::after {
     animation-duration: 1ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 1ms !important;
-    scroll-behavior: auto !important;
   }
-}
-
-/* v0.2.2 — pure-black, minimal interface.
-   The visible island is black in every state; hierarchy comes from spacing,
-   type, and thin separators rather than gradients, glass, or decorative glow. */
-.island-surface,
-.stage[data-platform="win32"] .island-surface,
-.island-surface.is-quiet-idle,
-.stage[data-platform="win32"] .island-surface.is-quiet-idle {
-  background: #000 !important;
-  border-color: rgba(255, 255, 255, 0.10);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.015);
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
-}
-
-.island-surface::after,
-.island-surface.is-quiet-idle::after,
-.mark-sheen {
-  display: none !important;
-}
-
-.island-surface.has-attention {
-  border-color: rgba(243, 184, 93, 0.42);
-  box-shadow: inset 0 0 0 1px rgba(243, 184, 93, 0.035);
-}
-
-.attention-flash {
-  border-color: rgba(243, 184, 93, 0.58);
-  box-shadow: none;
-}
-
-.agent-mark,
-.agent-mark-claude,
-.agent-mark-codex,
-.agent-mark-hermes {
-  color: rgba(255, 255, 255, 0.90);
-  background: #050505 !important;
-  border-color: rgba(255, 255, 255, 0.10);
-  box-shadow: none;
-}
-
-.compact-button:hover,
-.island-surface.is-quiet-idle .compact-button:hover,
-.island-surface.is-quiet-idle .dock-button:hover {
-  background: transparent;
-}
-
-.compact-chevron,
-.agent-switcher,
-.agent-status-card,
-.status-activity,
-.icon-button,
-.quiet-button,
-.command-block,
-.decision-button,
-.permanent-confirmation,
-.onboarding-steps > span,
-.settings-group,
-.setting-action-button,
-.setting-select select {
-  background: #050505 !important;
-  box-shadow: none !important;
-}
-
-.agent-switcher,
-.agent-status-card,
-.status-activity,
-.command-block,
-.decision-button,
-.permanent-confirmation,
-.settings-group {
-  border-color: rgba(255, 255, 255, 0.085) !important;
-}
-
-.agent-switch.is-active {
-  background: rgba(255, 255, 255, 0.085);
-  box-shadow: none;
-}
-
-.panel-header {
-  border-bottom-color: rgba(255, 255, 255, 0.08);
-}
-
-.agent-status-card {
-  margin: 8px 12px 12px;
-  border-radius: 14px;
-}
-
-.status-activity {
-  border-radius: 12px;
-}
-
-.pending-chip,
-.risk-pill,
-.compact-count,
-.dock-badge,
-.agent-switch-badge {
-  box-shadow: none;
-}
-
-.decision-once,
-.decision-deny,
-.decision-always {
-  background: #050505 !important;
-}
-
-.decision-button:hover:not(:disabled),
-.icon-button:hover,
-.quiet-button:hover,
-.setting-action-button:hover {
-  background: #0b0b0b !important;
-}
-
-.transient-symbol,
-.onboarding-symbol {
-  background: #050505 !important;
-  box-shadow: none !important;
-}
-
-/* Keep the quiet pill visually exact: no border, copy, glow, or hover fill. */
-.island-surface.is-quiet-idle {
-  border-color: transparent;
-  box-shadow: none;
-}
-
-
-
-/* v0.2.3 — stronger side dock behaviour.
-   Make the docked idle state read unmistakably as a circle and remove any
-   browser-default button geometry that can create an oval at the screen edge. */
-.island-surface.view-dock {
-  aspect-ratio: 1 / 1;
-}
-
-.dock-button {
-  appearance: none;
-  -webkit-appearance: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 0;
-  min-height: 0;
-  border-radius: 50%;
-}
-
-.island-surface.view-dock.is-quiet-idle,
-.island-surface.view-dock.is-quiet-idle .dock-button {
-  border-radius: 50%;
-}
-
-.island-surface.view-dock.is-quiet-idle {
-  border-color: rgba(255, 255, 255, 0.08);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.018);
-}
-
-/* v0.3.1 — terminal handoff for plan mode and unsupported prompts. */
-.handoff-view {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  background: #000;
-}
-
-.handoff-header .header-agent strong {
-  max-width: 250px;
-}
-
-.handoff-body {
-  display: flex;
-  min-height: 0;
-  flex-direction: column;
-  justify-content: center;
-  gap: 13px;
-  padding: 14px;
-}
-
-.handoff-body > p {
-  display: -webkit-box;
-  overflow: hidden;
-  margin: 0;
-  color: rgba(255, 255, 255, 0.62);
-  font-size: 12px;
-  line-height: 1.45;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-
-.terminal-handoff-button {
-  appearance: none;
-  -webkit-appearance: none;
-  display: flex;
-  width: 100%;
-  align-items: center;
-  gap: 11px;
-  padding: 11px 12px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 13px;
-  color: #f5f5f7;
-  background: #080808;
-  cursor: pointer;
-  text-align: left;
-}
-
-.terminal-handoff-button:hover:not(:disabled) {
-  border-color: rgba(255, 255, 255, 0.22);
-  background: #0d0d0d;
-}
-
-.terminal-handoff-button:disabled {
-  opacity: 0.48;
-  cursor: default;
-}
-
-.terminal-handoff-button > svg {
-  flex: 0 0 auto;
-  color: rgba(255, 255, 255, 0.82);
-}
-
-.terminal-handoff-button > span {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.terminal-handoff-button strong {
-  font-size: 13px;
-  font-weight: 550;
-}
-
-.terminal-handoff-button small {
-  overflow: hidden;
-  color: rgba(255, 255, 255, 0.42);
-  font-size: 10px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }

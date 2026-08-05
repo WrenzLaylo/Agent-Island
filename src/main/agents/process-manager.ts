@@ -19,6 +19,7 @@ import {
   type ApprovalTrackerState
 } from './hermes-approval'
 import { canApproveRequest } from '../../shared/approval-guard'
+import { normalizeTerminalText } from '../../shared/ansi'
 import { updateCodexApprovalTracker, resolveCodexResponseKeys } from './codex-approval'
 import {
   createTerminalInputTrackerState,
@@ -26,6 +27,13 @@ import {
   updateTerminalInputTracker,
   type TerminalInputTrackerState
 } from './terminal-input'
+
+/**
+ * How much trailing output the prompt detectors get to look at. Comfortably
+ * larger than the biggest window any detector uses internally (Codex takes 8k
+ * after the panel title) while keeping per-chunk scanning bounded.
+ */
+const SCAN_TAIL_CHARS = 24_000
 
 export interface LaunchSpec {
   command: string
@@ -351,18 +359,28 @@ export class PtyManager extends EventEmitter {
   }
 
   private scanInteractions(session: LiveSession): void {
+    // This runs on every PTY chunk, so it must not be proportional to session
+    // length. It used to hand each detector the whole replay buffer (up to
+    // MAX_REPLAY_CHARS) and each detector re-stripped ANSI over all of it —
+    // O(session) work per chunk. A live prompt panel is always at the tail, and
+    // every detector already windows down to ≤12k internally, so we normalise a
+    // bounded tail exactly once and share it.
+    const scanText = normalizeTerminalText(
+      session.replay.length > SCAN_TAIL_CHARS ? session.replay.slice(-SCAN_TAIL_CHARS) : session.replay
+    )
+
     if (session.agentId === 'hermes' || session.agentId === 'codex') {
       const update = session.agentId === 'hermes'
         ? updateHermesApprovalTracker({
             state: session.approval,
-            chunkOrFullBuffer: session.replay,
+            chunkOrFullBuffer: scanText,
             agentId: session.agentId,
             cwd: session.info.cwd,
             processAlive: session.info.alive
           })
         : updateCodexApprovalTracker({
             state: session.approval,
-            chunkOrFullBuffer: session.replay,
+            chunkOrFullBuffer: scanText,
             cwd: session.info.cwd,
             processAlive: session.info.alive
           })
@@ -373,7 +391,7 @@ export class PtyManager extends EventEmitter {
 
     const inputUpdate = updateTerminalInputTracker({
       state: session.terminalInput,
-      chunkOrFullBuffer: session.replay,
+      chunkOrFullBuffer: scanText,
       agentId: session.agentId,
       cwd: session.info.cwd,
       processAlive: session.info.alive,

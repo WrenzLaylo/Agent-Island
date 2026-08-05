@@ -83,10 +83,12 @@ export function ApprovalCard({ approval, approveEnabled, disabled = false, onDec
 
   return (
     <div className={`approval-card risk-${approval.risk}`}>
+      {/* The panel header already states "Approval required" and names the
+          agent, so this row carries only the request-specific summary and the
+          risk verdict. */}
       <div className="approval-summary-row">
         <div className="approval-summary-copy">
           <strong>{approval.summary || 'Command approval'}</strong>
-          <small>{approval.agentId === 'hermes' ? 'Hermes is paused until you decide.' : 'The agent is paused until you decide.'}</small>
         </div>
         <span className={`risk-pill risk-${approval.risk}`}>{riskLabel(approval.risk)}</span>
       </div>
@@ -101,7 +103,7 @@ export function ApprovalCard({ approval, approveEnabled, disabled = false, onDec
           <div><span>Folder</span><code>{approval.cwd}</code></div>
         ) : null}
         {approval.riskReason ? (
-          <div><span>Why it was flagged</span><p>{approval.riskReason}</p></div>
+          <div><span>Flagged</span><p>{approval.riskReason}</p></div>
         ) : null}
       </div>
 
