@@ -2,17 +2,18 @@
 
 | Agent | Discovery | Launch | Multi-session PTY | Island approvals |
 |-------|-----------|--------|-------------------|------------------|
-| Claude Code | PATH + common paths | direct `.exe` | yes | no (Phase 4) |
-| Codex CLI | PATH + npm shim | `.cmd` via `cmd.exe /c` | yes when found | no (Phase 4) |
-| Hermes Agent | PATH + hermes venv | direct `.exe` | yes | no (Phase 4) |
+| Claude Code | PATH + common paths | direct `.exe` | yes | no approval bridge; complex prompts hand off to terminal |
+| Codex CLI | PATH + npm shim | `.cmd` via `cmd.exe /c` | yes when found | yes for known approvals; other prompts hand off to terminal |
+| Hermes Agent | PATH + hermes venv | direct `.exe` | yes | yes, plugin and known terminal prompts; other prompts hand off |
 
 ## Integration mode
 
-All available agents currently report `terminal-basic`:
+Integration modes now vary by adapter:
 
-- Full interactive ConPTY terminal in the island
-- Approvals must be handled inside the agent TUI until Phase 4
-- Demo approval UI is optional (`Demo` button in peek) and never controls a real process
+- Claude: `terminal-basic` — interactive ConPTY terminal; plan mode and unsupported prompts can be handed to the focused terminal window
+- Codex: `terminal-known` — interactive ConPTY terminal plus known command/file approvals and terminal handoff for other choices
+- Hermes: terminal session plus its structured/plugin and terminal approval paths
+- Demo approval UI is optional and never controls a real process
 
 ## Session rules (Phase 3)
 

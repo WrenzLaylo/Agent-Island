@@ -29,12 +29,12 @@ function shortenCommand(command: string, max = 1200): string {
 
 const CHOICE_ORDER: ApprovalDecision[] = ['once', 'session', 'always', 'deny']
 
-function choiceLabel(choice: ApprovalDecision): string {
+function choiceLabel(choice: ApprovalDecision, approval: ApprovalRequest): string {
   switch (choice) {
     case 'session':
       return 'Allow for this session'
     case 'always':
-      return 'Add to permanent allowlist'
+      return approval.source === 'codex-terminal' ? "Don't ask again" : 'Add to permanent allowlist'
     case 'deny':
       return 'Deny'
     default:
@@ -42,12 +42,14 @@ function choiceLabel(choice: ApprovalDecision): string {
   }
 }
 
-function choiceHint(choice: ApprovalDecision): string {
+function choiceHint(choice: ApprovalDecision, approval: ApprovalRequest): string {
   switch (choice) {
     case 'session':
       return 'Remember until this agent session ends'
     case 'always':
-      return 'Automatically allow matching commands in future sessions'
+      return approval.source === 'codex-terminal'
+        ? 'Codex may persist a matching command-prefix rule across future sessions'
+        : 'Automatically allow matching commands in future sessions'
     case 'deny':
       return 'Block this action and return control to the agent'
     default:
@@ -116,8 +118,10 @@ export function ApprovalCard({ approval, approveEnabled, disabled = false, onDec
           animate={{ opacity: 1, y: 0 }}
         >
           <div>
-            <strong>Allow matching commands automatically?</strong>
-            <small>This permission can apply in future sessions. Only confirm when you trust this command pattern.</small>
+            <strong>{approval.source === 'codex-terminal' ? "Stop asking for matching Codex commands?" : 'Allow matching commands automatically?'}</strong>
+            <small>{approval.source === 'codex-terminal'
+              ? 'Codex may save a broad command-prefix rule that remains active in future sessions and workspaces. Confirm only when you understand the displayed scope.'
+              : 'This permission can apply in future sessions. Only confirm when you trust this command pattern.'}</small>
           </div>
           <div className="permanent-actions">
             <button type="button" className="quiet-button" data-no-drag="true" onClick={() => setConfirmPermanent(false)}>
@@ -150,7 +154,7 @@ export function ApprovalCard({ approval, approveEnabled, disabled = false, onDec
                 whileTap={!buttonDisabled ? { scale: 0.985 } : undefined}
               >
                 <span className="decision-icon"><DecisionIcon choice={choice} /></span>
-                <span className="decision-copy"><strong>{choiceLabel(choice)}</strong><small>{choiceHint(choice)}</small></span>
+                <span className="decision-copy"><strong>{choiceLabel(choice, approval)}</strong><small>{choiceHint(choice, approval)}</small></span>
               </motion.button>
             )
           })}

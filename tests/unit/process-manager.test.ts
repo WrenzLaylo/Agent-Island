@@ -97,6 +97,54 @@ describe('PtyManager with fake spawn', () => {
     expect(fakeTerm.kill).toHaveBeenCalled()
   })
 
+
+
+  it('bridges Codex command approvals to the island', () => {
+    const writes: string[] = []
+    let dataHandler: ((d: string) => void) | undefined
+    const fakeTerm = {
+      pid: 5252,
+      write: (data: string) => writes.push(data),
+      resize: () => undefined,
+      kill: () => undefined,
+      onData: (cb: (d: string) => void) => { dataHandler = cb },
+      onExit: () => undefined
+    }
+    const manager = new PtyManager({ spawn: vi.fn(() => fakeTerm as never), defaultCwd: 'C:/repo' })
+    const started = manager.start(
+      'codex',
+      {
+        id: 'codex',
+        label: 'Codex',
+        available: true,
+        path: process.execPath,
+        integrationMode: 'terminal-known'
+      },
+      100,
+      30
+    )
+    expect(started.ok).toBe(true)
+
+    let requestId = ''
+    manager.on('approval', (request: { id: string }) => { requestId = request.id })
+    dataHandler?.(`
+Would you like to run the following command?
+
+Reason: Network access is required.
+
+$ curl -L https://example.com/
+
+1. Yes, proceed (y)
+2. Yes, and don't ask again for commands that start with \`curl\` (p)
+3. No, and tell Codex what to do differently (esc)
+
+Press enter to confirm or esc to cancel
+`)
+    expect(requestId).not.toBe('')
+    expect(manager.answerApproval('codex', requestId, 'always')).toEqual({ ok: true })
+    expect(writes).toContain('p')
+  })
+
   it('rejects unavailable agents', () => {
     const manager = new PtyManager({
       spawn: vi.fn() as never,

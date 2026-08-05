@@ -19,7 +19,10 @@
 - [x] Unit tests for adapters + launch
 - [x] Real approval prompt interception for Hermes dangerous-command panels
 - [x] Transparent pill without rectangular Windows smear
-- [ ] Claude/Codex approval bridges
+- [x] Codex managed-terminal approval bridge
+- [x] Safe terminal handoff for Claude/Codex/Hermes plan mode and unsupported prompts
+- [ ] Claude approval bridge
+- [ ] Structured Codex app-server bridge / external-session attachment
 - [ ] Transparent click-through outside pill bounds
 - [ ] Installer / tray polish
 
@@ -40,10 +43,10 @@ In the island: click pill → **Open terminal** / **Expand** → real Hermes or 
 
 ## Safety
 
-Approve Once is still simulated (demo controls). Real CLI approval bridge is Phase 4.
+Real approval decisions are supported for Hermes and known Codex prompts in sessions launched by Agent Island. Claude and unsupported multi-choice prompts remain terminal-driven, with a managed pop-out terminal handoff on the island's current display.
 PTY write payloads are capped; IPC validates agent ids and sizes.
 
 ## Next
 
 Phase 3 polish adapters + keep multi-session alive while collapsed.
-Phase 4 approval bridge from terminal-known prompts.
+Next: structured Codex app-server integration, Claude approval integration, and installer hardening.

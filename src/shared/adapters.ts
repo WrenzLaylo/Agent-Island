@@ -42,15 +42,15 @@ export const AGENT_ADAPTERS: Record<AgentId, AgentAdapterDescriptor> = {
   codex: {
     id: 'codex',
     label: 'Codex',
-    integrationMode: 'terminal-basic',
+    integrationMode: 'terminal-known',
     defaultArgs: [],
     env: {},
     capabilities: {
       interactiveTerminal: true,
       multiSession: true,
-      islandApprovals: false
+      islandApprovals: true
     },
-    notes: 'Codex CLI via ConPTY when executable is found. Approvals Phase 4.'
+    notes: 'Codex CLI via ConPTY with known command and file-change approval prompts bridged into Agent Island.'
   },
   hermes: {
     id: 'hermes',

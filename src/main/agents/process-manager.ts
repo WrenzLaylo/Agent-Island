@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events'
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import * as pty from 'node-pty'
-import type { AgentId, ApprovalDecision, ApprovalRequest } from '../../shared/contracts'
+import type { AgentId, ApprovalDecision, ApprovalRequest, TerminalInputPrompt } from '../../shared/contracts'
 import {
   MAX_REPLAY_CHARS,
   type PtyExitEvent,
@@ -19,6 +19,13 @@ import {
   type ApprovalTrackerState
 } from './hermes-approval'
 import { canApproveRequest } from '../../shared/approval-guard'
+import { updateCodexApprovalTracker, resolveCodexResponseKeys } from './codex-approval'
+import {
+  createTerminalInputTrackerState,
+  dismissTerminalInput,
+  updateTerminalInputTracker,
+  type TerminalInputTrackerState
+} from './terminal-input'
 
 export interface LaunchSpec {
   command: string
@@ -39,6 +46,7 @@ interface LiveSession {
   replay: string
   lastOutputAt: number
   approval: ApprovalTrackerState
+  terminalInput: TerminalInputTrackerState
 }
 
 export class PtyManager extends EventEmitter {
@@ -69,6 +77,22 @@ export class PtyManager extends EventEmitter {
 
   getPendingApproval(agentId: AgentId): ApprovalRequest | null {
     return this.sessions.get(agentId)?.approval.pending ?? null
+  }
+
+  getPendingTerminalInput(agentId: AgentId): TerminalInputPrompt | null {
+    return this.sessions.get(agentId)?.terminalInput.pending ?? null
+  }
+
+  dismissTerminalInput(agentId: AgentId, promptId?: string): boolean {
+    const session = this.sessions.get(agentId)
+    if (!session) return false
+    const previous = session.terminalInput.pending
+    session.terminalInput = dismissTerminalInput(session.terminalInput, promptId)
+    if (previous && !session.terminalInput.pending) {
+      this.emit('terminal-input-cleared', { ...previous, waitingForInput: false })
+      return true
+    }
+    return false
   }
 
   isAlive(agentId: AgentId): boolean {
@@ -144,7 +168,8 @@ export class PtyManager extends EventEmitter {
         info,
         replay: '',
         lastOutputAt: Date.now(),
-        approval: createApprovalTrackerState()
+        approval: createApprovalTrackerState(),
+        terminalInput: createTerminalInputTrackerState()
       }
       this.sessions.set(agentId, session)
       this.emit('session', { ...info })
@@ -153,12 +178,12 @@ export class PtyManager extends EventEmitter {
         session.replay = appendReplay(session.replay, data, MAX_REPLAY_CHARS)
         session.lastOutputAt = Date.now()
         this.emit('data', { agentId, data })
-        this.scanApprovals(session)
+        this.scanInteractions(session)
       })
 
       term.onExit(({ exitCode, signal }) => {
         session.info.alive = false
-        this.scanApprovals(session)
+        this.scanInteractions(session)
         const event: PtyExitEvent = {
           agentId,
           exitCode: exitCode ?? 0,
@@ -208,11 +233,11 @@ export class PtyManager extends EventEmitter {
   ): { ok: boolean; error?: string } {
     const session = this.sessions.get(agentId)
     if (!session) return { ok: false, error: 'No session' }
-    if (agentId !== 'hermes') {
-      return { ok: false, error: 'Island approvals only supported for Hermes in Phase 4' }
+    if (agentId !== 'hermes' && agentId !== 'codex') {
+      return { ok: false, error: 'Island approvals are not available for this agent yet' }
     }
 
-    this.scanApprovals(session)
+    this.scanInteractions(session)
     const pending = session.approval.pending
     if (!pending || pending.id !== requestId) {
       return { ok: false, error: 'No matching pending approval' }
@@ -235,13 +260,20 @@ export class PtyManager extends EventEmitter {
       return { ok: false, error: 'Cannot deny this request' }
     }
 
-    const recheck = updateHermesApprovalTracker({
-      state: session.approval,
-      chunkOrFullBuffer: session.replay,
-      agentId,
-      cwd: session.info.cwd,
-      processAlive: session.info.alive
-    })
+    const recheck = agentId === 'hermes'
+      ? updateHermesApprovalTracker({
+          state: session.approval,
+          chunkOrFullBuffer: session.replay,
+          agentId,
+          cwd: session.info.cwd,
+          processAlive: session.info.alive
+        })
+      : updateCodexApprovalTracker({
+          state: session.approval,
+          chunkOrFullBuffer: session.replay,
+          cwd: session.info.cwd,
+          processAlive: session.info.alive
+        })
     session.approval = recheck.state
     if (
       !session.approval.pending ||
@@ -251,7 +283,9 @@ export class PtyManager extends EventEmitter {
       return { ok: false, error: 'Approval panel changed or disappeared — open terminal' }
     }
 
-    const keys = resolveHermesResponseKeys(session.approval, decision)
+    const keys = agentId === 'hermes'
+      ? resolveHermesResponseKeys(session.approval, decision)
+      : resolveCodexResponseKeys(session.approval, decision)
     if (!keys.ok) return { ok: false, error: keys.reason }
 
     try {
@@ -316,22 +350,38 @@ export class PtyManager extends EventEmitter {
     await Promise.all(ids.map((id) => this.stop(id, true)))
   }
 
-  private scanApprovals(session: LiveSession): void {
-    if (session.agentId !== 'hermes') return
-    const update = updateHermesApprovalTracker({
-      state: session.approval,
+  private scanInteractions(session: LiveSession): void {
+    if (session.agentId === 'hermes' || session.agentId === 'codex') {
+      const update = session.agentId === 'hermes'
+        ? updateHermesApprovalTracker({
+            state: session.approval,
+            chunkOrFullBuffer: session.replay,
+            agentId: session.agentId,
+            cwd: session.info.cwd,
+            processAlive: session.info.alive
+          })
+        : updateCodexApprovalTracker({
+            state: session.approval,
+            chunkOrFullBuffer: session.replay,
+            cwd: session.info.cwd,
+            processAlive: session.info.alive
+          })
+      session.approval = update.state
+      if (update.cleared) this.emit('approval-cleared', update.cleared)
+      if (update.raised) this.emit('approval', update.raised)
+    }
+
+    const inputUpdate = updateTerminalInputTracker({
+      state: session.terminalInput,
       chunkOrFullBuffer: session.replay,
       agentId: session.agentId,
       cwd: session.info.cwd,
-      processAlive: session.info.alive
+      processAlive: session.info.alive,
+      suppress: Boolean(session.approval.pending)
     })
-    session.approval = update.state
-    if (update.cleared) {
-      this.emit('approval-cleared', update.cleared)
-    }
-    if (update.raised) {
-      this.emit('approval', update.raised)
-    }
+    session.terminalInput = inputUpdate.state
+    if (inputUpdate.cleared) this.emit('terminal-input-cleared', inputUpdate.cleared)
+    if (inputUpdate.raised) this.emit('terminal-input', inputUpdate.raised)
   }
 }
 

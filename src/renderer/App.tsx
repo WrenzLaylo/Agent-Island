@@ -8,7 +8,8 @@ import {
   type DockSide,
   type IslandSettings,
   type IslandSnapshot,
-  type IslandWindowLayout
+  type IslandWindowLayout,
+  type TerminalInputPrompt
 } from '@shared/contracts'
 import {
   createInitialIslandState,
@@ -35,6 +36,7 @@ function sizeForPresentation(
 ): { width: number; height: number } {
   if (panel === 'settings') return { width: 478, height: 660 }
   if (panel === 'onboarding') return { width: 430, height: 420 }
+  if (panel === 'handoff') return { width: 410, height: 224 }
   if (mode === 'collapsed' && docked) return quietIdle ? { width: 48, height: 48 } : { width: 62, height: 62 }
 
   switch (mode) {
@@ -101,6 +103,7 @@ export function App() {
   const [isDragging, setIsDragging] = useState(false)
   const [isMorphing, setIsMorphing] = useState(false)
   const [panel, setPanel] = useState<IslandPanel>(null)
+  const [terminalInput, setTerminalInput] = useState<TerminalInputPrompt | null>(null)
 
   const stateRef = useRef(state)
   const settingsRef = useRef(settings)
@@ -293,6 +296,41 @@ export function App() {
       dispatch({ type: 'COLLAPSE' })
     })
 
+    const offTerminalInput = api.onTerminalInput((request: TerminalInputPrompt) => {
+      if (!request?.id || !request.agentId) return
+      setTerminalInput(request)
+      setAttentionNonce((value) => value + 1)
+      setPanel('handoff')
+      dispatch({ type: 'SELECT_AGENT', agentId: request.agentId, open: false })
+      dispatch({
+        type: 'SET_AGENT_STATUS',
+        agentId: request.agentId,
+        status: 'waiting',
+        activityLabel: 'Needs input in terminal',
+        available: true
+      })
+      dispatch({ type: 'EXPAND' })
+      if (settingsRef.current.approvalSounds) playApprovalCue()
+    })
+
+    const offTerminalInputCleared = api.onTerminalInputCleared((request: TerminalInputPrompt) => {
+      setTerminalInput((current) => {
+        if (!current || current.id !== request.id) return current
+        return null
+      })
+      setPanel((current) => current === 'handoff' ? null : current)
+      const agent = stateRef.current.agents[request.agentId]
+      if (agent?.available && agent.pendingApprovalIds.length === 0) {
+        dispatch({
+          type: 'SET_AGENT_STATUS',
+          agentId: request.agentId,
+          status: 'running',
+          activityLabel: 'Session running',
+          available: true
+        })
+      }
+    })
+
     const offPtySession = api.onPtySession((session: PtySessionInfo) => {
       if (session.alive && stateRef.current.approvalQueue.length === 0) {
         dispatch({ type: 'SELECT_AGENT', agentId: session.agentId, open: false })
@@ -350,6 +388,8 @@ export function App() {
       offOpenSettings()
       offReturnHome()
       offOutsideClick()
+      offTerminalInput()
+      offTerminalInputCleared()
       offPtySession()
       offPtyExit()
       for (const timer of Object.values(completionTimers.current)) {
@@ -413,7 +453,7 @@ export function App() {
         dispatch({ type: 'SET_ERROR', message: result.error ?? 'The decision could not be written.' })
         return
       }
-    } else if (approval.source === 'hermes-terminal' && api?.ptyAnswerApproval) {
+    } else if ((approval.source === 'hermes-terminal' || approval.source === 'codex-terminal') && api?.ptyAnswerApproval) {
       const result = await api.ptyAnswerApproval({
         agentId: approval.agentId,
         requestId: approval.id,
@@ -569,11 +609,30 @@ export function App() {
 
   const onClickPill = () => {
     if (suppressClickRef.current) return
+    if (terminalInput && stateRef.current.approvalQueue.length === 0) {
+      setPanel('handoff')
+      dispatch({ type: 'SELECT_AGENT', agentId: terminalInput.agentId, open: false })
+      dispatch({ type: 'EXPAND' })
+      return
+    }
     setPanel(null)
     if (active.id !== stateRef.current.activeAgentId) {
       dispatch({ type: 'SELECT_AGENT', agentId: active.id, open: false })
     }
     dispatch({ type: 'CLICK_PILL' })
+  }
+
+  const openTerminal = async (agentId: AgentId, promptId?: string) => {
+    const result = await window.agentIsland.openTerminal({ agentId, promptId })
+    if (!result.ok) {
+      dispatch({ type: 'SET_ERROR', message: result.error ?? 'The terminal could not be opened.' })
+      return
+    }
+    if (terminalInput?.agentId === agentId && (!promptId || terminalInput.id === promptId)) {
+      setTerminalInput(null)
+    }
+    setPanel(null)
+    dispatch({ type: 'COLLAPSE' })
   }
 
   const returnHome = async () => {
@@ -596,6 +655,7 @@ export function App() {
           state={state}
           active={active}
           approval={approval}
+          terminalInput={terminalInput ?? undefined}
           queueCount={queueCount}
           approveEnabled={approveEnabled}
           statusNote={statusNote}
@@ -612,6 +672,8 @@ export function App() {
             dispatch({ type: 'COLLAPSE' })
           }}
           onDecision={(decision) => void onDecision(decision)}
+          onContinueInTerminal={(agentId, promptId) => void openTerminal(agentId, promptId)}
+          onOpenTerminal={(agentId) => void openTerminal(agentId)}
           onDismiss={() => dispatch({ type: 'DISMISS_TRANSIENT' })}
           onOpenSettings={() => setPanel('settings')}
           onClosePanel={() => setPanel(null)}

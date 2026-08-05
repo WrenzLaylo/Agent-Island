@@ -1,6 +1,6 @@
 {
   "name": "agent-island",
-  "version": "0.2.3",
+  "version": "0.3.1",
   "private": true,
   "description": "Dynamic Island-style overlay for Claude, Codex, and Hermes agent sessions",
   "main": "./out/main/index.js",

@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { AgentId, ApprovalDecision, IslandSettings, IslandWindowLayout } from '../shared/contracts'
+import type { AgentId, ApprovalDecision, IslandSettings, IslandWindowLayout, TerminalInputPrompt } from '../shared/contracts'
 import type {
   PtyDataEvent,
   PtyExitEvent,
@@ -55,6 +55,10 @@ export interface IslandApi {
   onOpenSettings: (handler: () => void) => () => void
   onReturnHome: (handler: () => void) => () => void
   onOutsideClick: (handler: () => void) => () => void
+  openTerminal: (request: { agentId: AgentId; promptId?: string }) => Promise<{ ok: boolean; error?: string }>
+  onTerminalInput: (handler: (request: TerminalInputPrompt) => void) => () => void
+  onTerminalInputCleared: (handler: (request: TerminalInputPrompt) => void) => () => void
+  onTerminalFocus: (handler: () => void) => () => void
 }
 
 const api: IslandApi = {
@@ -142,6 +146,22 @@ const api: IslandApi = {
     const listener = () => handler()
     ipcRenderer.on('island:outside-click', listener)
     return () => ipcRenderer.removeListener('island:outside-click', listener)
+  },
+  openTerminal: (request) => ipcRenderer.invoke('terminal:handoff', request),
+  onTerminalInput: (handler) => {
+    const listener = (_event: Electron.IpcRendererEvent, request: TerminalInputPrompt) => handler(request)
+    ipcRenderer.on('island:terminal-input', listener)
+    return () => ipcRenderer.removeListener('island:terminal-input', listener)
+  },
+  onTerminalInputCleared: (handler) => {
+    const listener = (_event: Electron.IpcRendererEvent, request: TerminalInputPrompt) => handler(request)
+    ipcRenderer.on('island:terminal-input-cleared', listener)
+    return () => ipcRenderer.removeListener('island:terminal-input-cleared', listener)
+  },
+  onTerminalFocus: (handler) => {
+    const listener = () => handler()
+    ipcRenderer.on('terminal:focus', listener)
+    return () => ipcRenderer.removeListener('terminal:focus', listener)
   }
 }
 

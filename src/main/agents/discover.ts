@@ -140,8 +140,8 @@ async function resolveCodex(): Promise<DiscoveredAgent> {
     available: true,
     path: found,
     version,
-    integrationMode: 'terminal-basic',
-    notes: 'Codex CLI ready for ConPTY terminal session'
+    integrationMode: 'terminal-known',
+    notes: 'Codex CLI ready with terminal approval bridging'
   }
 }
 

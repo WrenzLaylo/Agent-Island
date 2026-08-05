@@ -6,7 +6,8 @@ import type {
   ApprovalRequest,
   DockSide,
   IslandSettings,
-  IslandSnapshot
+  IslandSnapshot,
+  TerminalInputPrompt
 } from '@shared/contracts'
 import { AGENT_ORDER } from '@shared/contracts'
 import { AgentMark } from './AgentMark'
@@ -16,12 +17,13 @@ import { OnboardingCard } from './OnboardingCard'
 import { SettingsPanel } from './SettingsPanel'
 import { StatusDot } from './StatusDot'
 
-export type IslandPanel = 'settings' | 'onboarding' | null
+export type IslandPanel = 'settings' | 'onboarding' | 'handoff' | null
 
 interface IslandShellProps {
   state: IslandSnapshot
   active: AgentSnapshot
   approval?: ApprovalRequest
+  terminalInput?: TerminalInputPrompt
   queueCount: number
   approveEnabled: boolean
   statusNote: string
@@ -35,6 +37,8 @@ interface IslandShellProps {
   onClickPill: () => void
   onCollapse: () => void
   onDecision: (decision: ApprovalDecision) => void
+  onContinueInTerminal: (agentId: AgentId, promptId?: string) => void
+  onOpenTerminal: (agentId: AgentId) => void
   onDismiss: () => void
   onOpenSettings: () => void
   onClosePanel: () => void
@@ -56,6 +60,15 @@ function GearIcon() {
     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.7" />
       <path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.4 1a7 7 0 0 0-1.8-1L14.4 3h-4.8l-.4 3.1a7 7 0 0 0-1.8 1l-2.4-1-2 3.4L5 11a7 7 0 0 0 0 2l-2 1.5 2 3.4 2.4-1a7 7 0 0 0 1.8 1l.4 3.1h4.8l.4-3.1a7 7 0 0 0 1.8-1l2.4 1 2-3.4L19 13a7 7 0 0 0 .1-1Z" stroke="currentColor" strokeWidth="1.45" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+function TerminalIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <rect x="3.5" y="4.5" width="17" height="15" rx="2.5" stroke="currentColor" strokeWidth="1.6" />
+      <path d="m7.5 9 3 3-3 3M13 15h4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   )
 }
@@ -129,6 +142,7 @@ export function IslandShell(props: IslandShellProps) {
     state,
     active,
     approval,
+    terminalInput,
     queueCount,
     approveEnabled,
     statusNote,
@@ -142,6 +156,8 @@ export function IslandShell(props: IslandShellProps) {
     onClickPill,
     onCollapse,
     onDecision,
+    onContinueInTerminal,
+    onOpenTerminal,
     onDismiss,
     onOpenSettings,
     onClosePanel,
@@ -151,6 +167,8 @@ export function IslandShell(props: IslandShellProps) {
   } = props
 
   const hasApproval = queueCount > 0
+  const hasTerminalInput = Boolean(terminalInput)
+  const hasAttention = hasApproval || hasTerminalInput
   const isDockOrb = state.mode === 'collapsed' && Boolean(docked) && !panel
   const isCompact = state.mode === 'collapsed' && !docked && !panel
   const view = panel ?? (isDockOrb ? 'dock' : isCompact ? 'compact' : state.mode)
@@ -160,14 +178,14 @@ export function IslandShell(props: IslandShellProps) {
   return (
     <motion.section
       layout
-      className={`island-surface view-${view} ${docked ? `anchored-${docked}` : ''} ${hasApproval ? 'has-attention' : ''} ${quietIdle ? 'is-quiet-idle' : ''} ${isMorphing ? 'is-morphing' : ''}`}
+      className={`island-surface view-${view} ${docked ? `anchored-${docked}` : ''} ${hasAttention ? 'has-attention' : ''} ${quietIdle ? 'is-quiet-idle' : ''} ${isMorphing ? 'is-morphing' : ''}`}
       data-drag-region="true"
       data-mode={view}
       aria-live="polite"
       transition={settings.reducedMotion ? { duration: 0.08 } : { type: 'spring', stiffness: 380, damping: 34, mass: 0.88 }}
     >
       <AnimatePresence initial={false}>
-        {hasApproval ? (
+        {hasAttention ? (
           <motion.span
             key={`attention-${attentionNonce}`}
             className="attention-flash"
@@ -237,6 +255,38 @@ export function IslandShell(props: IslandShellProps) {
           <motion.div key="settings" className="island-content" {...contentTransition} transition={{ duration: motionDuration, delay: settings.reducedMotion ? 0 : 0.07 }}>
             <SettingsPanel settings={settings} onChange={onSettingsChange} onClose={onClosePanel} onReturnHome={onReturnHome} />
           </motion.div>
+        ) : panel === 'handoff' && terminalInput ? (
+          <motion.div
+            key={`handoff-${terminalInput.id}`}
+            className="island-content handoff-view"
+            {...contentTransition}
+            transition={{ duration: motionDuration, delay: settings.reducedMotion ? 0 : 0.06 }}
+            role="dialog"
+            aria-label={`${state.agents[terminalInput.agentId].label} needs input in the terminal`}
+          >
+            <div className="panel-header handoff-header" data-drag-region="true">
+              <div className="header-agent">
+                <span className="header-mark-wrap"><AgentMark agentId={terminalInput.agentId} compact /><StatusDot status="waiting" /></span>
+                <span><strong>{terminalInput.title}</strong><small>Complete this step in the managed terminal.</small></span>
+              </div>
+              <button type="button" className="icon-button" data-no-drag="true" onClick={onCollapse} aria-label="Collapse">
+                <CloseIcon />
+              </button>
+            </div>
+            <div className="handoff-body">
+              <p>{terminalInput.detail?.split('\n')[0] || 'This prompt has choices or typed input that Agent Island should not answer automatically.'}</p>
+              <button
+                type="button"
+                className="terminal-handoff-button"
+                data-no-drag="true"
+                disabled={isMorphing}
+                onClick={() => onContinueInTerminal(terminalInput.agentId, terminalInput.id)}
+              >
+                <TerminalIcon />
+                <span><strong>Continue in Terminal</strong><small>Move it to this display and focus the prompt</small></span>
+              </button>
+            </div>
+          </motion.div>
         ) : state.mode === 'approval' && approval ? (
           <motion.div
             key={`approval-${approval.id}-${attentionNonce}`}
@@ -281,6 +331,7 @@ export function IslandShell(props: IslandShellProps) {
               <AgentTabs agents={AGENT_ORDER.map((id) => state.agents[id])} activeAgentId={state.activeAgentId} onSelect={onSelectAgent} />
               <div className="panel-actions">
                 {hasApproval ? <span className="pending-chip">{queueCount} pending</span> : null}
+                <button type="button" className="icon-button" data-no-drag="true" onClick={() => onOpenTerminal(active.id)} disabled={!active.available} aria-label={`Open ${active.label} terminal`}><TerminalIcon /></button>
                 <button type="button" className="icon-button" data-no-drag="true" onClick={onOpenSettings} aria-label="Open settings"><GearIcon /></button>
                 <button type="button" className="icon-button" data-no-drag="true" onClick={onCollapse} aria-label="Collapse"><CloseIcon /></button>
               </div>

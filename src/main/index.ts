@@ -26,7 +26,8 @@ import type {
   ApprovalDecision,
   DockSide,
   IslandSettings,
-  IslandWindowLayout
+  IslandWindowLayout,
+  TerminalInputPrompt
 } from '../shared/contracts'
 import {
   isAgentId,
@@ -39,6 +40,7 @@ import {
 } from '../shared/pty-types'
 
 let mainWindow: BrowserWindow | null = null
+const terminalWindows = new Map<AgentId, BrowserWindow>()
 let tray: Tray | null = null
 let discoveryCache: AgentDiscoveryResult | null = null
 const ptyManager = new PtyManager({ defaultCwd: shellHomeCwd(), forceKillMs: 1500 })
@@ -52,6 +54,10 @@ const HOME_TOP_GAP = 12
 const HOME_SNAP_VERTICAL = 64
 const HOME_SNAP_HORIZONTAL = 150
 const WINDOW_SHAPE_INSET = 5
+const MIN_ISLAND_WIDTH = 48
+const MIN_ISLAND_HEIGHT = 48
+const MAX_ISLAND_WIDTH = 1200
+const MAX_ISLAND_HEIGHT = 900
 const APPROVAL_DECISIONS: ApprovalDecision[] = ['once', 'session', 'always', 'deny']
 const TRAY_ICON =
   'iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAA8UlEQVR4nO2WQQ6CMBBFq3FPIyuvw9YuZeUd9CweohthOWw5jq5IegNcSBP4mRZEqyT2JZNmBtL5/CYdhIhEIv/OaspLRDXNbaBUpnzPN1MaH4+H/VwBdg+XEKcDRDW90xjRuqw4EetvNBfi6eKkoySqKUm2bT/atr3ZgPrVBtRPNnAvFME60MeY5s7lxjQF1ItuPUN9kCMDASGsR/AoRh0IzagAKdMdl0uZ5lDPu/UC9UGOeO8BlwhsytS9Tfss6wiUypTWZRWyIV5Iy3JAiLAucNcx60AIEa5Z4B3Hn5iG9kNenoackDmM/Q9EIpGf8wB9Tpiv0CRbHgAAAABJRU5ErkJggg=='
@@ -508,6 +514,126 @@ function rebuildTrayMenu(): void {
   )
 }
 
+function sendToRenderer(channel: string, payload?: unknown): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (win.isDestroyed() || win.webContents.isDestroyed()) continue
+    win.webContents.send(channel, payload)
+  }
+}
+
+function islandDisplay() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    const bounds = mainWindow.getBounds()
+    return screen.getDisplayNearestPoint({
+      x: bounds.x + Math.floor(bounds.width / 2),
+      y: bounds.y + Math.floor(bounds.height / 2)
+    })
+  }
+  return screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+}
+
+function centreTerminalOnIslandDisplay(win: BrowserWindow): void {
+  const display = islandDisplay()
+  const area = display.workArea
+  const current = win.getBounds()
+  const width = clamp(current.width || 980, 640, Math.max(640, Math.floor(area.width * 0.94)))
+  const height = clamp(current.height || 680, 420, Math.max(420, Math.floor(area.height * 0.90)))
+  const currentDisplay = screen.getDisplayMatching(current)
+
+  // Preserve the user's position when it is already on the same display.
+  if (currentDisplay.id === display.id) {
+    const x = clamp(current.x, area.x, Math.max(area.x, area.x + area.width - width))
+    const y = clamp(current.y, area.y, Math.max(area.y, area.y + area.height - height))
+    win.setBounds({ x, y, width, height }, false)
+    return
+  }
+
+  win.setBounds({
+    x: Math.round(area.x + (area.width - width) / 2),
+    y: Math.round(area.y + (area.height - height) / 2),
+    width,
+    height
+  }, false)
+}
+
+function createTerminalWindow(agentId: AgentId): BrowserWindow {
+  const existing = terminalWindows.get(agentId)
+  if (existing && !existing.isDestroyed()) return existing
+
+  const display = islandDisplay()
+  const area = display.workArea
+  const width = Math.min(980, Math.max(640, Math.floor(area.width * 0.82)))
+  const height = Math.min(700, Math.max(420, Math.floor(area.height * 0.78)))
+  const preloadPath = join(__dirname, '../preload/index.js')
+  const label = agentId === 'claude' ? 'Claude' : agentId === 'codex' ? 'Codex' : 'Hermes'
+  const win = new BrowserWindow({
+    x: Math.round(area.x + (area.width - width) / 2),
+    y: Math.round(area.y + (area.height - height) / 2),
+    width,
+    height,
+    minWidth: 640,
+    minHeight: 420,
+    show: false,
+    backgroundColor: '#000000',
+    title: `${label} Terminal — Agent Island`,
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: preloadPath,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+      backgroundThrottling: false
+    }
+  })
+
+  win.setMenuBarVisibility(false)
+  terminalWindows.set(agentId, win)
+
+  const query = { agent: agentId }
+  if (isDev && process.env.ELECTRON_RENDERER_URL) {
+    const base = process.env.ELECTRON_RENDERER_URL.replace(/\/$/, '')
+    void win.loadURL(`${base}/terminal.html?agent=${encodeURIComponent(agentId)}`)
+  } else {
+    void win.loadFile(join(__dirname, '../renderer/terminal.html'), { query })
+  }
+
+  win.once('ready-to-show', () => {
+    centreTerminalOnIslandDisplay(win)
+    win.show()
+    win.focus()
+  })
+  win.on('closed', () => terminalWindows.delete(agentId))
+  return win
+}
+
+async function handoffToTerminal(agentId: AgentId, promptId?: string): Promise<{ ok: boolean; error?: string }> {
+  const agent = agentFromDiscovery(agentId)
+  if (!agent?.available) return { ok: false, error: `${agentId} is not available` }
+
+  try {
+    let win = createTerminalWindow(agentId)
+    if (win.isDestroyed()) win = createTerminalWindow(agentId)
+    if (win.isMinimized()) win.restore()
+    const targetDisplay = islandDisplay()
+    const currentDisplay = screen.getDisplayMatching(win.getBounds())
+    const moveAcrossDisplays = currentDisplay.id !== targetDisplay.id
+    const wasMaximized = win.isMaximized()
+    if (wasMaximized && moveAcrossDisplays) win.unmaximize()
+    if (!win.isMaximized()) centreTerminalOnIslandDisplay(win)
+    if (wasMaximized && moveAcrossDisplays) win.maximize()
+    if (!win.webContents.isLoading()) {
+      win.show()
+      win.moveTop()
+      win.focus()
+      win.webContents.send('terminal:focus')
+    }
+    ptyManager.dismissTerminalInput(agentId, promptId)
+    return { ok: true }
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
 function createWindow(): void {
   const initial = getIslandBounds(128, 48)
   const preloadPath = join(__dirname, '../preload/index.js')
@@ -575,12 +701,12 @@ function registerIpc(): void {
       typeof height !== 'number' ||
       !Number.isFinite(width) ||
       !Number.isFinite(height) ||
-      width < 56 ||
-      width > 1200 ||
-      height < 48 ||
-      height > 900
+      width < MIN_ISLAND_WIDTH ||
+      width > MAX_ISLAND_WIDTH ||
+      height < MIN_ISLAND_HEIGHT ||
+      height > MAX_ISLAND_HEIGHT
     ) {
-      throw new Error('Invalid island size')
+      throw new Error(`Invalid island size: ${String(width)}×${String(height)} (allowed ${MIN_ISLAND_WIDTH}–${MAX_ISLAND_WIDTH} × ${MIN_ISLAND_HEIGHT}–${MAX_ISLAND_HEIGHT})`)
     }
     return await resizeIsland(Math.round(width), Math.round(height))
   })
@@ -600,6 +726,17 @@ function registerIpc(): void {
   ipcMain.handle('island:get-bounds', () => mainWindow?.getBounds() ?? null)
   ipcMain.handle('island:get-settings', () => getSettings())
   ipcMain.handle('island:update-settings', (_event: unknown, patch: Partial<IslandSettings>) => updateAppSettings(patch ?? {}))
+  ipcMain.handle(
+    'terminal:handoff',
+    (_event: unknown, request: { agentId?: unknown; promptId?: unknown }) => {
+      if (!request || !isAgentId(request.agentId)) return { ok: false, error: 'Invalid agentId' }
+      if (request.promptId != null && typeof request.promptId !== 'string') {
+        return { ok: false, error: 'Invalid promptId' }
+      }
+      const promptId = typeof request.promptId === 'string' ? request.promptId : undefined
+      return handoffToTerminal(request.agentId, promptId)
+    }
+  )
 
   ipcMain.handle('island:discover-agents', async () => {
     discoveryCache = await discoverAgents()
@@ -687,9 +824,9 @@ function wireBridgeEvents(): void {
 }
 
 function wirePtyEvents(): void {
-  ptyManager.on('data', (payload) => mainWindow?.webContents.send('pty:data', payload))
-  ptyManager.on('exit', (payload) => mainWindow?.webContents.send('pty:exit', payload))
-  ptyManager.on('session', (payload) => mainWindow?.webContents.send('pty:session', payload))
+  ptyManager.on('data', (payload) => sendToRenderer('pty:data', payload))
+  ptyManager.on('exit', (payload) => sendToRenderer('pty:exit', payload))
+  ptyManager.on('session', (payload) => sendToRenderer('pty:session', payload))
   ptyManager.on('approval', (request) => {
     showIsland()
     mainWindow?.webContents.send('island:approval', request)
@@ -698,9 +835,17 @@ function wirePtyEvents(): void {
     mainWindow?.webContents.send('island:approval-cleared', request)
   })
   ptyManager.on('approval-answered', (payload) => {
-    mainWindow?.webContents.send('island:approval-answered', payload)
+    sendToRenderer('island:approval-answered', payload)
+  })
+  ptyManager.on('terminal-input', (request: TerminalInputPrompt) => {
+    showIsland()
+    mainWindow?.webContents.send('island:terminal-input', request)
+  })
+  ptyManager.on('terminal-input-cleared', (request: TerminalInputPrompt) => {
+    mainWindow?.webContents.send('island:terminal-input-cleared', request)
   })
 }
+
 
 app.whenReady().then(async () => {
   loadPersistedStore()
@@ -732,7 +877,7 @@ app.whenReady().then(async () => {
   })
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    if (!mainWindow || mainWindow.isDestroyed()) createWindow()
     else showIsland()
   })
 })

@@ -36,6 +36,26 @@ export type RiskLevel = 'low' | 'elevated' | 'high' | 'unknown'
 
 export type ApprovalDecision = 'once' | 'session' | 'always' | 'deny'
 
+export type TerminalInputKind = 'plan' | 'selection' | 'question' | 'authentication' | 'unsupported'
+
+/**
+ * A live terminal prompt that Agent Island deliberately does not try to answer.
+ * The safe action is to hand control back to the managed terminal window.
+ */
+export interface TerminalInputPrompt {
+  id: string
+  agentId: AgentId
+  kind: TerminalInputKind
+  title: string
+  detail?: string
+  cwd: string
+  createdAt: number
+  expiresAt: number
+  processAlive: boolean
+  waitingForInput: boolean
+  fingerprint: string
+}
+
 export type TransientKind =
   | 'approved'
   | 'denied'
