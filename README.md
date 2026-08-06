@@ -1,99 +1,151 @@
-# Agent Island v0.3.1
+# Agent Island
 
-Agent Island is a transparent Dynamic Island-style desktop HUD for monitoring supported coding agents and handling live approval requests without keeping a large terminal window in front of you.
+A Dynamic Island-style overlay for coding agents on Windows. It sits almost
+invisible at the top of your screen, shows what **Claude Code**, **Codex** and
+**Hermes** are doing in your real terminals, and lets you answer their
+permission prompts without switching windows.
 
-## What v0.3.1 includes
+<!-- Add a screenshot or short capture here. -->
 
-- A pitch-black island surface in compact and expanded states, with no glass gradient or backdrop blur
-- A plain idle pill with no logo, text, border, or glow until activity begins
-- Quiet compact states for **Working**, **Attention required**, and **Resolved**
-- Smooth native pill-to-panel morphing with a rounded window mask
-- Dragging, magnetic left/right docking, a compact edge orb, and magnetic top-centre home snapping
-- Per-monitor position and dock memory
-- Detection and switching for **Claude Code**, **Codex**, and **Hermes**
-- FIFO approval queue with expiry, cancellation, stale-request, and bridge-error handling
-- Hermes permission choices when provided by the live request:
-  - Allow once
-  - Allow for this session
-  - Add to permanent allowlist
-  - Deny
-- Safe terminal handoff for plan mode, numbered selections, typed questions, and authentication prompts:
-  - Automatically recognises unsupported interactive prompts in managed Claude, Codex, and Hermes sessions
-  - Shows a focused **Continue in Terminal** action instead of guessing an answer
-  - Restores the correct managed terminal, moves it to the display containing Agent Island, and focuses the live prompt
-  - Keeps the agent session alive when the terminal window is closed
-- A terminal button in the expanded overview for manually bringing the active agent terminal to the current display
-- Codex terminal approval bridging for sessions launched inside Agent Island:
-  - Command execution requests
-  - File-change requests
-  - Approve once
-  - Don't ask again when Codex exposes that option
-  - Deny
-- A second confirmation before permanent allowlisting
-- Automatic return to pill mode after the final request is resolved
-- First-run onboarding, system tray controls, and an in-island settings panel
-- Return-home controls in Settings and the tray, plus **Ctrl/⌘ + Alt + Home**
-- Native system typography using Segoe UI Variable on Windows and SF Pro/system UI fallbacks elsewhere
-- Deliberate click-to-open behaviour with no hover expansion
-- Automatic collapse when you click the desktop or another application
-- Reduced-motion, sound, auto-expand, startup, always-on-top, and docking preferences
+## What it does
 
-## Integration boundary
+- **Watches terminals you already have open.** Run `claude` as you normally
+  would; the pill picks the session up.
+- **Answers permission prompts.** When Claude asks *"Do you want to proceed?"*,
+  the choices appear in the island — Allow once / Don't ask again / Deny — and
+  your answer is typed into the real session.
+- **Hands off what it should not answer.** Plan-mode menus, numbered choices,
+  authentication and free-text questions get a **Continue in Terminal** button
+  that restores, focuses and optionally moves that exact terminal window to the
+  display the island is on. No new session is ever started.
+- **Stays out of the way.** Idle it is a small black pill. It never takes
+  keyboard focus, and it does not expand at all when you are already looking at
+  the terminal that asked.
+- Drag it anywhere, drop it near an edge to dock it as an orb, or press
+  <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Home</kbd> to send it back to the top
+  centre. Position is remembered per monitor.
 
-Agent Island detects Claude Code, Codex, and Hermes and can switch between managed sessions. Live approval handling is implemented for Hermes and for known Codex terminal prompts. Complex or unknown plan-mode questions are handed back to a dedicated managed terminal window for all three agents. These features apply only to sessions launched or managed by Agent Island; the app does not attach to independently opened Windows Terminal, CMD, PowerShell, Claude, Codex, or Hermes windows.
+## How it works
 
+Windows gives no way to read another process's terminal output, so Agent Island
+does not try. A small wrapper runs **inside** your real terminal instead:
 
-## Codex approval adapter
-
-Codex command and file-change prompts are detected from the managed ConPTY terminal. Agent Island displays only the choices Codex exposes in the active prompt and writes the corresponding response back to that same session. Persistent Codex approval is deliberately labelled **Don't ask again** and receives an additional warning because Codex may store a broad command-prefix rule.
-
-This is a `terminal-known` adapter. Prompt changes in future Codex versions may require parser updates. A structured Codex app-server adapter remains the preferred longer-term integration.
-
-## Hermes approval bridge
-
-The bundled Hermes plugin communicates through:
-
-```text
-%LOCALAPPDATA%/hermes/agent-island/bridge/
-├── pending/<id>.json
-├── decisions/<id>.json
-└── heartbeat.json
+```
+island <agent>                     Agent Island
+  ├─ resolve host window            ├─ SessionWatcher
+  ├─ write sessions/<id>.json  ───► │   reads sessions + prompts
+  ├─ run the agent in a pty         │   validates pid + window liveness
+  ├─ scan output for prompts        │
+  ├─ write prompts/<id>.json   ───► │   shows approval / "needs input"
+  └─ read decisions/<id>.json  ◄─── └─ writes decisions/<id>.json
 ```
 
-When Hermes requests approval, the plugin writes a pending file. Agent Island validates and displays the request, writes the selected decision, then briefly confirms the result before returning to the compact pill. If more requests are waiting, it moves directly to the next one.
+The wrapper pipes the agent straight through, so you get an ordinary session.
+It also watches the output stream for prompts and publishes them to a file
+registry under `%LOCALAPPDATA%/agent-island/`. Files rather than a socket:
+either side can restart without the other losing track.
 
-Enable the plugin once:
+Finding *which* window hosts a session is the hard part. A shell inside Windows
+Terminal owns only a 0×0 pseudo-console, and a single `WindowsTerminal.exe`
+owns every one of its windows, so a pid lookup is ambiguous. The wrapper
+resolves it with a title handshake: set a unique window title, find the window
+now carrying it, restore the title, cache the handle.
+`docs/v0.4.0-changes.md` has the details and the measurements behind them.
 
-```bash
-hermes plugins enable agent-island-bridge
-```
+## Requirements
 
-Start a new Hermes session after enabling it so the plugin loads.
+- Windows 10 or 11
+- Node.js on `PATH` — the wrapper runs under Node, not Electron
+- At least one of `claude`, `codex` or `hermes` installed
 
-## Run locally
+## Getting started
 
 ```bash
 npm install
-npm run typecheck
-npm test
-npm run dev
+npm run build
+npm start
 ```
 
-## Main controls
+Then turn on **Settings → Terminals → Shell integration**. It adds `claude`,
+`codex` and `hermes` functions to your PowerShell profile, `.bashrc` and cmd's
+AutoRun, so the commands you already type run through the wrapper. Open a new
+terminal afterwards — shells read their profile at startup.
 
-- **Click the pill:** open or close the overview
-- **Click outside the island:** return to the compact pill
-- **Drag the pill/header:** reposition it
-- **Drop near a screen edge:** dock as a compact orb
-- **Drop near the top centre:** return to the original home position
-- **Ctrl/⌘ + Alt + Home:** return home from anywhere
-- **Click a docked orb:** restore the pill
-- **Drag an orb away from the edge:** undock it
-- **Agent mark:** switch between detected agents
-- **Terminal icon:** open the active managed terminal on the same display as Agent Island
-- **Continue in Terminal:** hand plan mode, selections, typed questions, and authentication back to the live terminal
-- **Tray menu:** visibility, return home, settings, startup, idle behaviour, motion, sounds, docking, and diagnostics
+The shims **fail open**: if the wrapper or Node is missing, the real executable
+runs instead.
 
-## Design principle
+Prefer not to touch your shell config? Skip it and start sessions explicitly:
 
-> Pitch black in every state, clear only when work needs to be shown, and immediately out of the way when dismissed.
+```
+%APPDATA%\agent-island\bin\island.cmd claude
+```
+
+To remove it later: **Settings → Terminals → Remove**, or
+`electron . --remove-shims`.
+
+## Terminal support
+
+| Terminal | Session detected | Window can be raised |
+|---|---|---|
+| Windows Terminal | yes | yes |
+| PowerShell / cmd (conhost) | yes | yes |
+| Git Bash (mintty) | yes | yes |
+| VS Code integrated terminal | yes | no — it is a panel, not a window |
+
+Tab and pane precision is not possible: no Windows API activates a specific
+terminal tab from another process, so handoff is window-level. If the agent's
+tab is not the active one you will land on the right window, wrong tab.
+
+Run `island --whoami` in any terminal to see what it resolves there.
+
+## Approval adapters
+
+| Agent | How prompts are detected |
+|---|---|
+| Claude | permission panels parsed from the output stream |
+| Codex | known command and file-change panels |
+| Hermes | structured, via the bundled plugin in `plugins/agent-island-bridge` |
+
+Only the choices an agent actually offers are answerable. Asking for a
+permanent allowlist on a panel that offers a session-scoped grant is refused
+rather than approximated, and session grants are never presented as permanent.
+
+Claude and Codex adapters parse terminal output, so a future change to their
+prompt wording may need a parser update.
+
+## Development
+
+```bash
+npm run dev        # electron-vite dev
+npm run typecheck  # both tsconfig projects
+npm test           # vitest
+```
+
+```
+src/main/         Electron main — windows, IPC, session watcher, shell shims
+src/main/agents/  prompt detectors for claude / codex / hermes
+src/node/         Node-only helpers shared by main and wrapper (Win32, paths)
+src/preload/      contextBridge API
+src/renderer/     React UI
+src/shared/       contracts + island state machine (no node imports)
+src/wrapper/      the `island` CLI that runs inside your terminal
+```
+
+Three conventions worth knowing before changing the UI:
+
+- The **OS window is the only thing that animates geometry.** The renderer
+  cross-fades content; it must not spring the surface as well.
+- **Never put a `box-shadow` or `drop-shadow` on `.island-surface`.** It fills
+  the transparent window exactly, so a shadow is composited *inside* the window
+  rectangle and renders as a visible grey square.
+- **Never clip the window with a native region.** `BrowserWindow.setShape()`
+  has no anti-aliasing and turns every rounded corner into a staircase. CSS
+  owns the silhouette.
+
+## Status
+
+Windows only. The window handshake, shell shims and Win32 layer have no macOS
+or Linux path.
+
+Multi-monitor handoff is implemented and reasoned about but has not been
+verified on real multi-monitor hardware.
