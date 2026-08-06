@@ -160,20 +160,18 @@ select:focus-visible,
 /*
  * A hairline border traced around a small circle is where the docked orb looked
  * ragged: at this diameter a 1px stroke lands on a different fraction of each
- * pixel all the way round, so the curve reads as stepped no matter how well the
- * fill is anti-aliased. The fill alone is smooth, so the orb separates from the
- * desktop with a soft shadow instead of an outline.
+ * pixel all the way round, so the curve reads as stepped however well the fill
+ * is anti-aliased. Dropping the outline is the fix; the fill alone is smooth.
+ *
+ * NEVER put a box-shadow (or drop-shadow filter) on this element. It fills the
+ * window exactly, and a shadow paints outside the border box — with no window
+ * left to paint into, Chromium composites it inside the window rectangle
+ * instead, so a soft halo becomes a visible dark SQUARE around the shape. That
+ * is the grey-box artefact this app spent several versions removing.
  */
-.island-surface.view-dock {
-  border-color: transparent;
-  box-shadow:
-    0 2px 10px rgba(0, 0, 0, 0.45),
-    0 0 0 1px rgba(255, 255, 255, 0.06);
-}
-
+.island-surface.view-dock,
 .island-surface.view-dock.is-quiet-idle {
   border-color: transparent;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
 }
 
 .island-surface.has-attention {
