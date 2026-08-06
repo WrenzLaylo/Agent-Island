@@ -345,7 +345,15 @@ export function IslandShell(props: IslandShellProps) {
             <div className="panel-header approval-panel-header" data-drag-region="true">
               <div className="header-agent">
                 <span className="header-mark-wrap"><AgentMark agentId={approval.agentId} compact /><StatusDot status="waiting" /></span>
-                <span><strong>Approval required</strong><small>{queueCount > 1 ? `${approvalAgent.label} · oldest of ${queueCount}` : approvalAgent.label}</small></span>
+                <span>
+                  <strong>Approval required</strong>
+                  <small>
+                    {approval.terminalLabel
+                      ? `${approvalAgent.label} in ${approval.terminalLabel}`
+                      : approvalAgent.label}
+                    {queueCount > 1 ? ` · 1 of ${queueCount}` : ''}
+                  </small>
+                </span>
               </div>
               <button type="button" className="icon-button" data-no-drag="true" onClick={onCollapse} aria-label="Collapse approval">
                 <CloseIcon />

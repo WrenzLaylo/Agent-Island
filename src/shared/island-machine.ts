@@ -199,16 +199,24 @@ export function reduceIsland(state: IslandSnapshot, event: IslandEvent): IslandS
       if (!agent) return state
 
       const approvals = { ...state.approvals, [request.id]: request }
+      // Ordered by when the agent actually asked, not by when this process
+      // happened to notice. Requests arrive from a directory listing and in a
+      // startup batch, so arrival order is filesystem order — which made the
+      // header claim "oldest" about whichever file was read first.
       const approvalQueue = state.approvalQueue.includes(request.id)
         ? state.approvalQueue
-        : [...state.approvalQueue, request.id]
+        : [...state.approvalQueue, request.id].sort(
+            (left, right) => (approvals[left]?.createdAt ?? 0) - (approvals[right]?.createdAt ?? 0)
+          )
       const autoExpand = event.autoExpand !== false
 
       return {
         ...state,
         approvals,
         approvalQueue,
-        activeAgentId: request.agentId,
+        // Follow the request being shown, which is the head of the queue — not
+        // the one that just arrived, which may be queued behind it.
+        activeAgentId: approvals[approvalQueue[0]]?.agentId ?? request.agentId,
         mode: autoExpand ? 'approval' : state.mode,
         transientKind: undefined,
         message: undefined,

@@ -174,4 +174,34 @@ describe('island state machine', () => {
     expect(state.activeAgentId).toBe('claude')
     expect(state.mode).toBe('peek')
   })
+
+  it('queues by when the agent asked, not when the island noticed', () => {
+    // Prompts arrive from a directory listing and in a startup batch, so
+    // arrival order is filesystem order. Showing whichever was read first
+    // and calling it the oldest was simply untrue.
+    const later = approval({ id: 'later', createdAt: 2000, sessionId: 's2' })
+    const earlier = approval({ id: 'earlier', createdAt: 1000, sessionId: 's1' })
+
+    let state = createInitialIslandState()
+    state = reduceIsland(state, { type: 'ENQUEUE_APPROVAL', request: later })
+    state = reduceIsland(state, { type: 'ENQUEUE_APPROVAL', request: earlier })
+
+    expect(state.approvalQueue).toEqual(['earlier', 'later'])
+    expect(currentApproval(state)?.id).toBe('earlier')
+    expect(pendingApprovalCount(state)).toBe(2)
+  })
+
+  it('keeps the shown request and the active agent in step', () => {
+    // The newly arrived request used to become the active agent even while
+    // an older one was still the one on screen.
+    const shown = approval({ id: 'shown', createdAt: 1000, agentId: 'claude' })
+    const queued = approval({ id: 'queued', createdAt: 2000, agentId: 'codex' })
+
+    let state = createInitialIslandState()
+    state = reduceIsland(state, { type: 'ENQUEUE_APPROVAL', request: shown })
+    state = reduceIsland(state, { type: 'ENQUEUE_APPROVAL', request: queued })
+
+    expect(currentApproval(state)?.id).toBe('shown')
+    expect(state.activeAgentId).toBe('claude')
+  })
 })

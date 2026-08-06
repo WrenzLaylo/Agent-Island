@@ -147,12 +147,13 @@ export class SessionWatcher extends EventEmitter {
       nextPrompts.set(record.promptId, record)
     }
 
-    for (const [promptId, record] of nextPrompts) {
-      const previous = this.prompts.get(promptId)
-      if (!previous) {
-        const session = nextSessions.get(record.sessionId)
-        if (session) this.emit('prompt-raised', record, session)
-      }
+    // Emit in the order the agents asked. `readdir` order is arbitrary.
+    const raised = [...nextPrompts.values()]
+      .filter((record) => !this.prompts.has(record.promptId))
+      .sort((left, right) => left.createdAt - right.createdAt)
+    for (const record of raised) {
+      const session = nextSessions.get(record.sessionId)
+      if (session) this.emit('prompt-raised', record, session)
     }
     for (const [promptId, record] of this.prompts) {
       if (!nextPrompts.has(promptId)) this.emit('prompt-cleared', record)

@@ -97,6 +97,12 @@ export interface ApprovalRequest {
   choices?: ApprovalDecision[]
   /** Registry session that raised this, when it came from an `island` wrapper. */
   sessionId?: string
+  /**
+   * Which terminal asked, e.g. "Windows Terminal". Two sessions of the same
+   * agent are otherwise indistinguishable on the card, and approving the wrong
+   * one is not a recoverable mistake.
+   */
+  terminalLabel?: string
 }
 
 export interface AgentSnapshot {

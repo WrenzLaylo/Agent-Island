@@ -127,7 +127,8 @@ function sessionPromptToApproval(
     source: `${prompt.agentId}-terminal` as ApprovalRequest['source'],
     fingerprint: prompt.fingerprint,
     choices: prompt.choices,
-    sessionId: session.id
+    sessionId: session.id,
+    terminalLabel: session.terminalLabel
   }
 }
 
