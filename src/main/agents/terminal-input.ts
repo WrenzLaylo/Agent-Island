@@ -113,8 +113,19 @@ export function detectTerminalInputPrompt(rawOutput: string, agentId: AgentId): 
   const hasActiveFooter = footerIndex >= 0 && recentText.length - footerIndex < 900
   const hasChoicePrompt = options.length >= 2 && (hasActiveFooter || planMatch)
   const hasQuestionPrompt = lastQuestionIndex >= 0 && hasTypedInputCue
-  const hasActivePlanPrompt = planMatch && (hasActiveFooter || options.length >= 2 || hasTypedInputCue || lastQuestionIndex >= 0)
-  const hasActiveAuthPrompt = authMatch && (hasActiveFooter || hasTypedInputCue || lastQuestionIndex >= 0)
+
+  // A trailing question mark is NOT evidence of an interactive prompt. Agents
+  // end ordinary replies with questions all the time ("Would you like me to
+  // proceed?"), and PLAN_RE matches that same conversational phrasing — so
+  // accepting `lastQuestionIndex >= 0` on its own made the island announce
+  // "needs input" and echo the last line of a perfectly finished reply.
+  //
+  // Something the user can actually *act on* has to be on screen: a rendered
+  // option list, or a key-hint footer ("Enter to confirm", "Esc to cancel"), or
+  // an explicit request for typed input.
+  const hasInteractiveAffordance = hasActiveFooter || options.length >= 2 || hasTypedInputCue
+  const hasActivePlanPrompt = planMatch && hasInteractiveAffordance
+  const hasActiveAuthPrompt = authMatch && hasInteractiveAffordance
 
   if (!hasActivePlanPrompt && !hasActiveAuthPrompt && !hasChoicePrompt && !hasQuestionPrompt) return null
 

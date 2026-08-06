@@ -6,6 +6,8 @@ import {
   updateTerminalInputTracker
 } from '../../src/main/agents/terminal-input'
 
+const NEWLINE = String.fromCharCode(10)
+
 describe('terminal input handoff detection', () => {
   it('detects Claude plan mode choices', () => {
     const result = detectTerminalInputPrompt(`
@@ -107,5 +109,34 @@ Enter to select · Esc to cancel
     })
 
     expect(second.raised).toBeUndefined()
+  })
+
+  it('ignores a finished reply that merely ends in a question', () => {
+    // Agents end ordinary replies with questions constantly. Without a rendered
+    // option list, a key-hint footer, or a request for typed input, there is
+    // nothing on screen for the user to act on — announcing "needs input" here
+    // just echoed the last line of a completed reply back at them.
+    const prose = [
+      'I have finished the refactor and all 56 tests pass.',
+      '',
+      'The remaining risk is the multi-monitor path, which I could not verify.',
+      'Would you like me to proceed with the merge?'
+    ].join(NEWLINE)
+
+    expect(detectTerminalInputPrompt(prose, 'claude')).toBeNull()
+  })
+
+  it('still detects a real prompt that renders options and a footer', () => {
+    const real = [
+      'Do you want to proceed?',
+      '  1. Yes',
+      '  2. Yes, and do not ask again',
+      '  3. No, and tell Claude what to do differently',
+      '',
+      'Press enter to confirm or esc to cancel'
+    ].join(NEWLINE)
+
+    const detected = detectTerminalInputPrompt(real, 'claude')
+    expect(detected).not.toBeNull()
   })
 })

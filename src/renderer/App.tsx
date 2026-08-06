@@ -161,6 +161,7 @@ export function App() {
   const [isMorphing, setIsMorphing] = useState(false)
   const [panel, setPanel] = useState<IslandPanel>(null)
   const [terminalInput, setTerminalInput] = useState<TerminalInputPrompt | null>(null)
+  const [windowFocused, setWindowFocused] = useState(false)
 
   const stateRef = useRef(state)
   const settingsRef = useRef(settings)
@@ -348,6 +349,8 @@ export function App() {
       dispatch({ type: 'COLLAPSE' })
     })
 
+    const offWindowFocus = api.onWindowFocus((focused: boolean) => setWindowFocused(focused))
+
     const offOutsideClick = api.onOutsideClick(() => {
       if (dragRef.current?.active) return
       setPanel(null)
@@ -495,6 +498,7 @@ export function App() {
       offOpenSettings()
       offReturnHome()
       offOutsideClick()
+      offWindowFocus()
       offTerminalInput()
       offTerminalInputCleared()
       offSessionAdded()
@@ -524,6 +528,30 @@ export function App() {
         if (resizeRunRef.current === run) setIsMorphing(false)
       })
   }, [size.width, size.height, settingsLoaded])
+
+  /**
+   * Retract an island that opened without being asked for.
+   *
+   * "Click outside to collapse" rides on the window's blur event, and a window
+   * that never held focus never blurs — so anything that expanded in the
+   * background used to sit there until you clicked it *and then* clicked away.
+   * If the island is open, unfocused and the pointer is not on it, nobody is
+   * using it, so it goes back to the pill on its own.
+   *
+   * Deliberate opens are unaffected: clicking the pill focuses the window, and
+   * the global shortcut and attention prompts now take focus too.
+   */
+  const isExpandedPresentation = state.mode !== 'collapsed' || panel !== null
+  useEffect(() => {
+    if (!isExpandedPresentation) return
+    if (windowFocused || state.hovered || isDragging) return
+    const timer = window.setTimeout(() => {
+      if (dragRef.current?.active) return
+      setPanel(null)
+      dispatch({ type: 'COLLAPSE' })
+    }, 1000)
+    return () => window.clearTimeout(timer)
+  }, [isExpandedPresentation, windowFocused, state.hovered, isDragging])
 
   useEffect(() => {
     if (state.mode !== 'success' && state.mode !== 'error') return

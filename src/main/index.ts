@@ -634,7 +634,12 @@ function createWindow(): void {
   mainWindow.on('moved', () => saveCurrentLayout())
   mainWindow.on('blur', () => {
     if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return
+    mainWindow.webContents.send('island:window-focus', false)
     mainWindow.webContents.send('island:outside-click')
+  })
+  mainWindow.on('focus', () => {
+    if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return
+    mainWindow.webContents.send('island:window-focus', true)
   })
 
   if (isDev && process.env.ELECTRON_RENDERER_URL) {
@@ -862,6 +867,10 @@ async function bootstrap(): Promise<void> {
   if (app.isPackaged) app.setLoginItemSettings({ openAtLogin: settings.launchAtStartup })
 
   globalShortcut.register('Control+Alt+Space', () => {
+    // Opening the island by shortcut is a deliberate act, so it takes focus.
+    // Without that it would open unfocused and the idle-retract below would
+    // immediately close it again.
+    showIsland({ focus: true })
     mainWindow?.webContents.send('island:toggle')
   })
 

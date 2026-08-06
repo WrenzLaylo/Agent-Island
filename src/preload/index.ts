@@ -60,6 +60,7 @@ export interface IslandApi {
   onOpenSettings: (handler: () => void) => () => void
   onReturnHome: (handler: () => void) => () => void
   onOutsideClick: (handler: () => void) => () => void
+  onWindowFocus: (handler: (focused: boolean) => void) => () => void
   openTerminal: (request: { agentId: AgentId; sessionId?: string }) => Promise<{ ok: boolean; error?: string }>
   onTerminalInput: (handler: (request: TerminalInputPrompt) => void) => () => void
   onTerminalInputCleared: (handler: (request: TerminalInputPrompt) => void) => () => void
@@ -149,6 +150,11 @@ const api: IslandApi = {
     const listener = () => handler()
     ipcRenderer.on('island:outside-click', listener)
     return () => ipcRenderer.removeListener('island:outside-click', listener)
+  },
+  onWindowFocus: (handler) => {
+    const listener = (_event: Electron.IpcRendererEvent, focused: boolean) => handler(focused)
+    ipcRenderer.on('island:window-focus', listener)
+    return () => ipcRenderer.removeListener('island:window-focus', listener)
   },
   openTerminal: (request) => ipcRenderer.invoke('terminal:handoff', request),
   onTerminalInput: (handler) => {
