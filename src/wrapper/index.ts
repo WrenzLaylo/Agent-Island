@@ -53,6 +53,8 @@ import { findWindowsByTitle } from '../node/win32-windows'
 const ESC = String.fromCharCode(27)
 const BEL = String.fromCharCode(7)
 const ETX = String.fromCharCode(3)
+/** Carriage return. Free text must be submitted; a digit choice must not. */
+const CR = String.fromCharCode(13)
 /** OSC introducer: ESC ] — the `]` is not optional. */
 const OSC = `${ESC}]`
 
@@ -405,12 +407,17 @@ async function main(): Promise<void> {
     expiresAt: number
     fingerprint?: string
     choices?: ApprovalDecision[]
+    options?: Array<{ index: number; label: string }>
+    isPermission?: boolean
   }) => {
     livePromptId = request.id
+    // A numbered question is answerable, but it is not a permission grant and
+    // must not reach the island wearing approve/deny language.
+    const isChoice = request.isPermission === false
     files.writePrompt({
       sessionId: id,
       agentId,
-      kind: 'approval',
+      kind: isChoice ? 'choice' : 'approval',
       promptId: request.id,
       title: request.summary,
       detail: request.detail,
@@ -418,7 +425,8 @@ async function main(): Promise<void> {
       createdAt: Date.now(),
       expiresAt: request.expiresAt,
       fingerprint: request.fingerprint ?? request.id,
-      choices: request.choices,
+      choices: isChoice ? undefined : request.choices,
+      options: request.options,
       risk: request.risk,
       riskReason: request.riskReason
     })
@@ -505,15 +513,38 @@ async function main(): Promise<void> {
       clearPrompt()
       return
     }
-    const keys =
-      agentId === 'hermes'
-        ? resolveHermesResponseKeys(approval, decision.choice)
-        : agentId === 'codex'
-          ? resolveCodexResponseKeys(approval, decision.choice)
-          : resolveClaudeResponseKeys(approval, decision.choice)
-    if (keys.ok) {
+    /*
+     * Three ways to answer, in order of directness.
+     *
+     * `text` and `optionIndex` bypass classification entirely: the island is
+     * relaying what the user picked or typed, using the agent's own numbering.
+     * Only a classified `choice` needs the responseKeys lookup, because that
+     * is the one case where the island translated the agent's wording.
+     */
+    let payload: string | null = null
+    if (typeof decision.text === 'string' && decision.text.length > 0) {
+      // Strip control characters: the text goes straight into a live TTY, and
+      // an embedded escape or newline would be interpreted, not typed.
+      const safe = decision.text.replace(/[ -]/g, '').slice(0, 2000)
+      if (safe.length > 0) payload = `${safe}${CR}`
+    } else if (typeof decision.optionIndex === 'number' && Number.isFinite(decision.optionIndex)) {
+      const index = Math.trunc(decision.optionIndex)
+      // The digit must correspond to an option the agent actually printed.
+      if (pending.options?.some((option) => option.index === index)) {
+        payload = `${index}`
+      }
+    } else if (decision.choice) {
+      const keys =
+        agentId === 'hermes'
+          ? resolveHermesResponseKeys(approval, decision.choice)
+          : agentId === 'codex'
+            ? resolveCodexResponseKeys(approval, decision.choice)
+            : resolveClaudeResponseKeys(approval, decision.choice)
+      if (keys.ok) payload = keys.keys
+    }
+    if (payload) {
       try {
-        term.write(keys.keys)
+        term.write(payload)
       } catch {
         // The agent may have moved on; the next scan will resync.
       }

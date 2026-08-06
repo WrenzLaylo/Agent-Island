@@ -748,19 +748,39 @@ function registerIpc(): void {
   ipcMain.handle('island:list-session-prompts', () => sessionWatcher.listPrompts())
   ipcMain.handle(
     'island:answer-session-prompt',
-    (_event: unknown, request: { sessionId?: unknown; promptId?: unknown; decision?: unknown }) => {
+    (
+      _event: unknown,
+      request: {
+        sessionId?: unknown
+        promptId?: unknown
+        decision?: unknown
+        optionIndex?: unknown
+        text?: unknown
+      }
+    ) => {
       if (
         !request ||
         typeof request.sessionId !== 'string' ||
-        typeof request.promptId !== 'string' ||
-        !isApprovalDecision(request.decision)
+        typeof request.promptId !== 'string'
       ) {
+        return { ok: false, error: 'Invalid decision' }
+      }
+      // Exactly one of the three answer forms must be present. Accepting more
+      // than one would leave the wrapper to pick, and it picks by precedence,
+      // not by what the user meant.
+      const hasChoice = isApprovalDecision(request.decision)
+      const hasIndex =
+        typeof request.optionIndex === 'number' && Number.isFinite(request.optionIndex)
+      const hasText = typeof request.text === 'string' && request.text.trim().length > 0
+      if (Number(hasChoice) + Number(hasIndex) + Number(hasText) !== 1) {
         return { ok: false, error: 'Invalid decision' }
       }
       const ok = sessionWatcher.writeDecision({
         sessionId: request.sessionId,
         promptId: request.promptId,
-        choice: request.decision,
+        choice: hasChoice ? (request.decision as ApprovalDecision) : undefined,
+        optionIndex: hasIndex ? Math.trunc(request.optionIndex as number) : undefined,
+        text: hasText ? (request.text as string) : undefined,
         decidedAt: Date.now()
       })
       return ok ? { ok: true } : { ok: false, error: 'The decision could not be written.' }

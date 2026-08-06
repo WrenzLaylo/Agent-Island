@@ -39,6 +39,11 @@ const EXPANDED_BASE_H = 148
 /** Past this the list scrolls rather than growing the window further. */
 const MAX_VISIBLE_SESSION_ROWS = 4
 
+/** Choice-card geometry: header, question, text field and terminal link. */
+const CHOICE_BASE_H = 236
+const CHOICE_ROW_H = 44
+const MAX_VISIBLE_CHOICE_ROWS = 4
+
 /**
  * Window size == visible size. There is no native mask and no frame inset any
  * more, so these are the literal pixels the user sees. Everything sits on a
@@ -50,7 +55,8 @@ function sizeForPresentation(
   approvalChoiceCount: number,
   panel: IslandPanel,
   quietIdle: boolean,
-  sessionRowCount: number
+  sessionRowCount: number,
+  isChoicePrompt: boolean
 ): { width: number; height: number } {
   if (panel === 'settings') return { width: 440, height: 600 }
   if (panel === 'onboarding') return { width: 400, height: 380 }
@@ -76,6 +82,13 @@ function sizeForPresentation(
     case 'error':
       return { width: 372, height: 108 }
     case 'approval':
+      // A choice card carries the question, the options, a text field and the
+      // terminal link; it is laid out from a different set of parts than the
+      // approval card, so it gets its own measure rather than borrowing one.
+      if (isChoicePrompt) {
+        const rows = Math.min(Math.max(approvalChoiceCount, 2), MAX_VISIBLE_CHOICE_ROWS)
+        return { width: 440, height: CHOICE_BASE_H + rows * CHOICE_ROW_H }
+      }
       return {
         width: 440,
         height: approvalChoiceCount >= 4 ? 516 : approvalChoiceCount === 3 ? 460 : 404
@@ -147,6 +160,8 @@ function sessionPromptToApproval(
     // 'codex-terminal' for anything that was not Hermes, so Claude approvals
     // were rendered with Codex's wording.
     source: `${prompt.agentId}-terminal` as ApprovalRequest['source'],
+    options: prompt.options,
+    isPermission: prompt.kind !== 'choice',
     fingerprint: prompt.fingerprint,
     choices: prompt.choices,
     sessionId: session.id,
@@ -242,12 +257,24 @@ export function App() {
       sizeForPresentation(
         state.mode,
         docked,
-        approval?.choices?.length ?? 2,
+        // A choice prompt is measured by its option count, an approval by its
+        // decision count.
+        (approval?.isPermission === false ? approval?.options?.length : approval?.choices?.length) ?? 2,
         panel,
         quietIdle,
-        sessionRows.length
+        sessionRows.length,
+        approval?.isPermission === false
       ),
-    [state.mode, docked, approval?.choices?.length, panel, quietIdle, sessionRows.length]
+    [
+      state.mode,
+      docked,
+      approval?.choices?.length,
+      approval?.options?.length,
+      approval?.isPermission,
+      panel,
+      quietIdle,
+      sessionRows.length
+    ]
   )
 
   useEffect(() => {
@@ -475,15 +502,35 @@ export function App() {
     const offSessionRemoved = api.onSessionRemoved((session) => {
       // If the terminal hosting the current handoff disappeared, stop offering
       // to switch to it.
-      setTerminalInput((current) => (current && current.id.startsWith(session.id) ? null : current))
+      //
+      // Match on sessionId, not on the prompt id. Prompt ids are minted as
+      // `claude-<ts>-<rand>` and never carried the session id as a prefix, so
+      // the old `startsWith` test could not match: closing a terminal left the
+      // island insisting that agent still needed input, and because the
+      // handoff panel has no settings button, that stuck panel also cut off
+      // the only route to settings.
+      setTerminalInput((current) => (current?.sessionId === session.id ? null : current))
       setPanel((current) => (current === 'handoff' ? null : current))
+      // Queued approvals from a dead session can never be answered either.
+      for (const requestId of stateRef.current.approvalQueue) {
+        if (stateRef.current.approvals[requestId]?.sessionId !== session.id) continue
+        dispatch({
+          type: 'INVALIDATE_APPROVAL',
+          requestId,
+          message: 'That terminal closed before this was answered.',
+          kind: 'cancelled'
+        })
+      }
       refreshSessions()
     })
 
     const offSessionPrompt = api.onSessionPrompt(({ prompt, session, terminalFocused }) => {
       // The user is already in the terminal that asked. Track the prompt so the
       // pill reflects it, but do not open over the thing they are reading.
-      if (prompt.kind === 'approval') {
+      // A choice rides the same queue as an approval: both are things the
+      // island can answer, both must be shown one at a time and in the order
+      // the agents asked. Only the card differs.
+      if (prompt.kind === 'approval' || prompt.kind === 'choice') {
         enqueueApproval(sessionPromptToApproval(prompt, session), true, !terminalFocused)
         return
       }
@@ -503,7 +550,7 @@ export function App() {
     })
 
     const offSessionPromptCleared = api.onSessionPromptCleared((prompt) => {
-      if (prompt.kind === 'approval') {
+      if (prompt.kind === 'approval' || prompt.kind === 'choice') {
         dispatch({
           type: 'INVALIDATE_APPROVAL',
           requestId: prompt.promptId,
@@ -526,7 +573,7 @@ export function App() {
       for (const prompt of list) {
         const session = sessionsRef.current.find((item: AgentSessionRecord) => item.id === prompt.sessionId)
         if (!session) continue
-        if (prompt.kind === 'approval') {
+        if (prompt.kind === 'approval' || prompt.kind === 'choice') {
           enqueueApproval(sessionPromptToApproval(prompt, session), false)
         } else {
           setTerminalInput(sessionPromptToHandoff(prompt, session))
@@ -625,6 +672,31 @@ export function App() {
     }
   }, [state.mode, state.message, state.approvalQueue.length, settings.autoCollapseMs])
 
+  /**
+   * Handoff prompts had no liveness check at all — only the `prompt-cleared`
+   * and `session-removed` events retired them, so a single missed event left
+   * "needs input" on screen forever with no way to clear it.
+   *
+   * This sweep is the backstop: a prompt is dropped once it expires, or as
+   * soon as the session that raised it is no longer in the registry.
+   */
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setTerminalInput((current) => {
+        if (!current) return current
+        if (Date.now() > current.expiresAt) return null
+        if (current.sessionId && !sessionsRef.current.some((s) => s.id === current.sessionId)) return null
+        return current
+      })
+    }, 1000)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  useEffect(() => {
+    if (terminalInput) return
+    setPanel((current) => (current === 'handoff' ? null : current))
+  }, [terminalInput])
+
   useEffect(() => {
     const timer = window.setInterval(() => {
       const snapshot = stateRef.current
@@ -670,6 +742,32 @@ export function App() {
       }
     }
     dispatch({ type: 'ANSWER_APPROVAL', requestId: approval.id, decision })
+  }
+
+  /**
+   * Answer a numbered question, either by picking an option or by typing.
+   *
+   * Deliberately separate from `onDecision`: that path is gated by
+   * `canApproveRequest`, whose invariants (risk known, permission semantics)
+   * describe a permission grant. A question is not one, and running it through
+   * those checks would block perfectly ordinary answers for being "unknown
+   * risk".
+   */
+  const answerChoice = async (answer: { optionIndex?: number; text?: string }) => {
+    if (!approval?.sessionId || isMorphing) return
+    const api = window.agentIsland
+    const result = await api.answerSessionPrompt({
+      sessionId: approval.sessionId,
+      promptId: approval.id,
+      ...answer
+    })
+    if (!result.ok) {
+      dispatch({ type: 'SET_ERROR', message: result.error ?? 'The agent no longer accepts this answer.' })
+      return
+    }
+    // 'once' is the state machine's neutral "answered and dismissed"; it is not
+    // shown to the user for a choice prompt.
+    dispatch({ type: 'ANSWER_APPROVAL', requestId: approval.id, decision: 'once' })
   }
 
   const updateAppSettings = (patch: Partial<IslandSettings>) => {
@@ -884,8 +982,15 @@ export function App() {
             dispatch({ type: 'COLLAPSE' })
           }}
           onDecision={(decision) => void onDecision(decision)}
+          onChoiceOption={(index) => void answerChoice({ optionIndex: index })}
+          onChoiceText={(text) => void answerChoice({ text })}
           onContinueInTerminal={(agentId, sessionId) => void openTerminal(agentId, sessionId)}
           onOpenTerminal={(agentId, sessionId) => void openTerminal(agentId, sessionId)}
+          onDismissHandoff={() => {
+            setTerminalInput(null)
+            setPanel(null)
+            dispatch({ type: 'COLLAPSE' })
+          }}
           onDismiss={() => dispatch({ type: 'DISMISS_TRANSIENT' })}
           onOpenSettings={() => setPanel('settings')}
           onClosePanel={() => setPanel(null)}

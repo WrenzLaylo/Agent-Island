@@ -30,12 +30,34 @@ export interface DetectedClaudeChoice {
   label: string
 }
 
+/** A numbered option exactly as Claude printed it. */
+export interface DetectedClaudeOption {
+  index: number
+  label: string
+}
+
 export interface ClaudeApprovalDetection {
   kind: 'claude-command' | 'claude-file-change' | 'claude-other'
   title: string
   command: string
   description: string
   choices: DetectedClaudeChoice[]
+  /**
+   * Every numbered option, verbatim and unclassified.
+   *
+   * Plan mode offers "Yes, and auto-accept edits" / "Yes, and manually approve
+   * edits" / "No, keep planning". None of the first two are `once`, `session`
+   * or `always` in any honest reading, so forcing them into that vocabulary
+   * would relabel the user's choice. They are carried through as text instead
+   * and answered by index.
+   */
+  options: DetectedClaudeOption[]
+  /**
+   * True when every pole of a real permission prompt is present. False means
+   * the panel is a question with numbered answers — still answerable, but not
+   * a permission grant, and it must not be rendered as one.
+   */
+  isPermission: boolean
   fingerprint: string
   risk: RiskLevel
   riskReason: string
@@ -159,10 +181,20 @@ export function detectClaudeApprovalPanel(rawOutput: string): ClaudeApprovalDete
     responseKeys[key] = `${candidate.index}`
   }
 
-  // The panel is only recognised when both poles are present. A stray numbered
-  // list in ordinary output cannot satisfy this.
-  if (!choices.some((choice) => choice.key === 'once')) return null
-  if (!choices.some((choice) => choice.key === 'deny')) return null
+  const options: DetectedClaudeOption[] = rawChoices.map((candidate) => ({
+    index: candidate.index,
+    label: candidate.label
+  }))
+
+  // Both poles present means this is a permission grant and can be rendered as
+  // one. Otherwise it is an ordinary numbered question — plan mode's "Yes, and
+  // auto-accept edits / No, keep planning" being the common case.
+  const isPermission =
+    choices.some((choice) => choice.key === 'once') && choices.some((choice) => choice.key === 'deny')
+
+  // A stray numbered list in ordinary output must not be mistaken for either.
+  // Two options and a question mark is the minimum that can be answered.
+  if (!isPermission && options.length < 2) return null
 
   // Still on screen? Once the user answers, Claude prints the tool result and
   // the panel falls further and further behind the end of the buffer.
@@ -200,14 +232,18 @@ export function detectClaudeApprovalPanel(rawOutput: string): ClaudeApprovalDete
 
   return {
     kind: isEdit ? 'claude-file-change' : isCommand ? 'claude-command' : 'claude-other',
-    title: isEdit
-      ? 'Claude wants to edit files'
-      : isCommand
-        ? 'Claude wants to run a command'
-        : 'Claude needs permission',
+    title: !isPermission
+      ? 'Claude is asking'
+      : isEdit
+        ? 'Claude wants to edit files'
+        : isCommand
+          ? 'Claude wants to run a command'
+          : 'Claude needs permission',
     command,
     description: question,
     choices,
+    options,
+    isPermission,
     /*
      * Identity must come only from parts of the panel that do not change while
      * it sits on screen: the question, the tool call, and the choice labels.
@@ -217,9 +253,12 @@ export function detectClaudeApprovalPanel(rawOutput: string): ClaudeApprovalDete
      * "already answered" guard never matched, and an approved request was
      * raised again and again.
      */
+    // Fingerprint from the raw options, not the classified ones: a question
+    // whose options never classify would otherwise hash an empty choice list
+    // and collide with every other such question.
     fingerprint: fingerprintDetection({
       command: `${question}|${toolLine ?? ''}`,
-      choices: choices.map((choice) => `${choice.index}:${choice.key}:${choice.label}`).join(',')
+      choices: options.map((option) => `${option.index}:${option.label}`).join(',')
     }),
     risk: risk.level,
     riskReason,
@@ -307,7 +346,9 @@ export function updateClaudeApprovalTracker(input: {
     superseded: false,
     source: 'claude-terminal',
     fingerprint: detection.fingerprint,
-    choices: detection.choices.map((choice) => choice.key)
+    choices: detection.choices.map((choice) => choice.key),
+    options: detection.options,
+    isPermission: detection.isPermission
   }
 
   next.pending = raised

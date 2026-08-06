@@ -24,7 +24,12 @@ export interface IslandApi {
   answerSessionPrompt: (request: {
     sessionId: string
     promptId: string
-    decision: ApprovalDecision
+    /** A classified permission decision. */
+    decision?: ApprovalDecision
+    /** A numbered option, answered by the agent's own digit. */
+    optionIndex?: number
+    /** Free text, submitted with Enter. */
+    text?: string
   }) => Promise<{ ok: boolean; error?: string }>
   onSessionPrompt: (
     handler: (payload: {

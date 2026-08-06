@@ -284,3 +284,90 @@ describe('claude approval detection', () => {
     expect(one?.fingerprint).not.toBe(two?.fingerprint)
   })
 })
+
+/**
+ * Plan mode. Captured shape: the question matches the permission wording, but
+ * none of the affirmative options are `Yes`, `Yes, and don't ask again` or a
+ * session variant — so the four-decision vocabulary cannot express them.
+ */
+const PLAN_MODE = panel([
+  'Ready to code?',
+  '',
+  '  Here is what I plan to do:',
+  '  1. Add the adapter',
+  '',
+  'Do you want to proceed?',
+  '❯ 1. Yes, and auto-accept edits',
+  '  2. Yes, and manually approve edits',
+  '  3. No, keep planning'
+])
+
+const OPEN_QUESTION = panel([
+  'Which database should I use?',
+  '',
+  'Do you want to proceed?',
+  '❯ 1. Postgres',
+  '  2. SQLite',
+  '  3. Let me type something else'
+])
+
+describe('claude numbered questions that are not permission grants', () => {
+  it('detects plan mode instead of discarding it', () => {
+    const detection = detectClaudeApprovalPanel(PLAN_MODE)
+    expect(detection).not.toBeNull()
+  })
+
+  it('marks plan mode as not a permission grant', () => {
+    const detection = detectClaudeApprovalPanel(PLAN_MODE)
+    expect(detection?.isPermission).toBe(false)
+  })
+
+  it('carries every option verbatim, in order, with its digit', () => {
+    const detection = detectClaudeApprovalPanel(PLAN_MODE)
+    expect(detection?.options).toEqual([
+      { index: 1, label: 'Yes, and auto-accept edits' },
+      { index: 2, label: 'Yes, and manually approve edits' },
+      { index: 3, label: 'No, keep planning' }
+    ])
+  })
+
+  it('does not relabel an auto-accept option as a permanent permission', () => {
+    // The old vocabulary would have had to call this `always`, which is a
+    // materially different promise from what Claude offered.
+    const detection = detectClaudeApprovalPanel(PLAN_MODE)
+    expect(detection?.responseKeys.always).toBeUndefined()
+    expect(detection?.responseKeys.once).toBeUndefined()
+  })
+
+  it('titles a non-permission panel as a question', () => {
+    expect(detectClaudeApprovalPanel(PLAN_MODE)?.title).toBe('Claude is asking')
+  })
+
+  it('handles options that share no vocabulary with permissions at all', () => {
+    const detection = detectClaudeApprovalPanel(OPEN_QUESTION)
+    expect(detection?.isPermission).toBe(false)
+    expect(detection?.options.map((option) => option.label)).toEqual([
+      'Postgres',
+      'SQLite',
+      'Let me type something else'
+    ])
+  })
+
+  it('still marks a real permission prompt as one', () => {
+    const detection = detectClaudeApprovalPanel(BASH_APPROVAL)
+    expect(detection?.isPermission).toBe(true)
+    expect(detection?.options).toHaveLength(3)
+  })
+
+  it('gives two different questions two different fingerprints', () => {
+    const a = detectClaudeApprovalPanel(PLAN_MODE)
+    const b = detectClaudeApprovalPanel(OPEN_QUESTION)
+    expect(a?.fingerprint).not.toBe(b?.fingerprint)
+  })
+
+  it('ignores a numbered list that is not a question', () => {
+    expect(
+      detectClaudeApprovalPanel(panel(['Here are the steps:', '  1. First', '  2. Second']))
+    ).toBeNull()
+  })
+})

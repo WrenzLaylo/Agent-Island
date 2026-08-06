@@ -15,6 +15,7 @@ import { folderName, type SessionRow } from '@shared/session-list'
 import { AgentTabs } from './AgentTabs'
 import { SessionList } from './SessionList'
 import { ApprovalCard } from './ApprovalCard'
+import { ChoiceCard } from './ChoiceCard'
 import { OnboardingCard } from './OnboardingCard'
 import { SettingsPanel } from './SettingsPanel'
 import { StatusDot } from './StatusDot'
@@ -41,8 +42,11 @@ interface IslandShellProps {
   onClickPill: () => void
   onCollapse: () => void
   onDecision: (decision: ApprovalDecision) => void
+  onChoiceOption: (index: number) => void
+  onChoiceText: (text: string) => void
   onContinueInTerminal: (agentId: AgentId, sessionId?: string) => void
   onOpenTerminal: (agentId: AgentId, sessionId?: string) => void
+  onDismissHandoff: () => void
   onDismiss: () => void
   onOpenSettings: () => void
   onClosePanel: () => void
@@ -205,8 +209,11 @@ export function IslandShell(props: IslandShellProps) {
     onClickPill,
     onCollapse,
     onDecision,
+    onChoiceOption,
+    onChoiceText,
     onContinueInTerminal,
     onOpenTerminal,
+    onDismissHandoff,
     onDismiss,
     onOpenSettings,
     onClosePanel,
@@ -218,6 +225,10 @@ export function IslandShell(props: IslandShellProps) {
   // Past one session, "which agent" stops identifying anything actionable —
   // two Claude sessions are one tab — so the panel addresses sessions instead.
   const multiSession = sessionRows.length > 1
+  // `isPermission === false` is set only by the detectors; anything older or
+  // from another source stays an approval, so this cannot silently downgrade
+  // a real permission prompt into a question.
+  const isChoicePrompt = approval?.isPermission === false
   const hasApproval = queueCount > 0
   const hasTerminalInput = Boolean(terminalInput)
   const hasAttention = hasApproval || hasTerminalInput
@@ -298,7 +309,13 @@ export function IslandShell(props: IslandShellProps) {
                 <span className="compact-copy" data-drag-region="true">
                   {/* The count lives in the trailing chip; repeating it here as
                       "1 pending" said the same thing twice on one 300px pill. */}
-                  <strong>{hasApproval ? 'Approval required' : active.label}</strong>
+                  <strong>
+                    {hasApproval
+                      ? isChoicePrompt
+                        ? `${approvalAgent.label} is asking`
+                        : 'Approval required'
+                      : active.label}
+                  </strong>
                   <small>{hasApproval ? approvalAgent.label : active.activityLabel || 'Ready'}</small>
                 </span>
                 <span className="compact-trailing" data-drag-region="true">
@@ -337,7 +354,11 @@ export function IslandShell(props: IslandShellProps) {
                   <small>{terminalInput.terminalLabel ?? 'Terminal'}</small>
                 </span>
               </div>
-              <button type="button" className="icon-button" data-no-drag="true" onClick={onCollapse} aria-label="Collapse">
+              {/* Dismiss, not merely collapse. Collapsing left the prompt in
+                  state, so the pill kept announcing "needs input" and reopened
+                  this same panel — which has no settings button, stranding the
+                  user. */}
+              <button type="button" className="icon-button" data-no-drag="true" onClick={onDismissHandoff} aria-label="Dismiss">
                 <CloseIcon />
               </button>
             </div>
@@ -374,13 +395,16 @@ export function IslandShell(props: IslandShellProps) {
             className="island-content approval-view"
             {...fade}
             role="dialog"
-            aria-label="Approval required"
+            aria-label={isChoicePrompt ? 'Agent is asking a question' : 'Approval required'}
           >
             <div className="panel-header approval-panel-header" data-drag-region="true">
               <div className="header-agent">
                 <span className="header-mark-wrap"><AgentMark agentId={approval.agentId} compact /><StatusDot status="waiting" /></span>
                 <span>
-                  <strong>Approval required</strong>
+                  {/* A question is not a permission grant; saying "Approval
+                      required" over plan mode would misdescribe what the user
+                      is about to agree to. */}
+                  <strong>{isChoicePrompt ? `${approvalAgent.label} is asking` : 'Approval required'}</strong>
                   <small>
                     {[
                       approval.terminalLabel
@@ -398,7 +422,17 @@ export function IslandShell(props: IslandShellProps) {
                 <CloseIcon />
               </button>
             </div>
-            <ApprovalCard approval={approval} approveEnabled={approveEnabled} disabled={isMorphing} onDecision={onDecision} />
+            {isChoicePrompt ? (
+              <ChoiceCard
+                prompt={approval}
+                disabled={isMorphing}
+                onOption={onChoiceOption}
+                onText={onChoiceText}
+                onOpenTerminal={() => onOpenTerminal(approval.agentId, approval.sessionId)}
+              />
+            ) : (
+              <ApprovalCard approval={approval} approveEnabled={approveEnabled} disabled={isMorphing} onDecision={onDecision} />
+            )}
           </motion.div>
         ) : state.mode === 'success' || state.mode === 'error' ? (
           <motion.div key={`transient-${state.transientKind}`} className="island-content transient-view" {...fade}>

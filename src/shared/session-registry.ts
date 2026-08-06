@@ -55,8 +55,13 @@ export interface AgentSessionRecord {
 export interface SessionPromptRecord {
   sessionId: string
   agentId: 'claude' | 'codex' | 'hermes'
-  /** 'approval' is answerable in the island; 'handoff' needs the terminal. */
-  kind: 'approval' | 'handoff'
+  /**
+   * 'approval' is a permission grant, answerable in the island.
+   * 'choice' is a numbered question — plan mode, or anything else the agent
+   * asks with a list. Answerable too, but never with approve/deny language.
+   * 'handoff' is anything the island cannot answer; it needs the terminal.
+   */
+  kind: 'approval' | 'choice' | 'handoff'
   promptId: string
   title: string
   detail: string
@@ -66,6 +71,8 @@ export interface SessionPromptRecord {
   fingerprint: string
   /** Only meaningful for kind === 'approval'. */
   choices?: Array<'once' | 'session' | 'always' | 'deny'>
+  /** Numbered options verbatim. Meaningful for kind === 'choice'. */
+  options?: Array<{ index: number; label: string }>
   risk?: 'low' | 'elevated' | 'high' | 'unknown'
   riskReason?: string
 }
@@ -102,7 +109,19 @@ export function parseFocusRequest(raw: string): SessionFocusRequest | null {
 export interface SessionDecisionRecord {
   sessionId: string
   promptId: string
-  choice: 'once' | 'session' | 'always' | 'deny'
+  /**
+   * A classified permission decision. Absent for `choice` prompts, whose
+   * options carry no such meaning.
+   */
+  choice?: 'once' | 'session' | 'always' | 'deny'
+  /** Answer by the option's own digit, exactly as the agent numbered it. */
+  optionIndex?: number
+  /**
+   * Free text typed in the island, sent followed by Enter. This is how a
+   * question with no usable option list gets answered without leaving the
+   * pill.
+   */
+  text?: string
   decidedAt: number
 }
 
@@ -163,7 +182,7 @@ export function parsePromptRecord(raw: string): SessionPromptRecord | null {
     if (typeof value.sessionId !== 'string' || !value.sessionId) return null
     if (typeof value.promptId !== 'string' || !value.promptId) return null
     if (!isAgent(value.agentId)) return null
-    if (value.kind !== 'approval' && value.kind !== 'handoff') return null
+    if (value.kind !== 'approval' && value.kind !== 'choice' && value.kind !== 'handoff') return null
     return {
       sessionId: value.sessionId,
       agentId: value.agentId,
@@ -176,6 +195,18 @@ export function parsePromptRecord(raw: string): SessionPromptRecord | null {
       expiresAt: typeof value.expiresAt === 'number' ? value.expiresAt : Date.now() + 300_000,
       fingerprint: typeof value.fingerprint === 'string' ? value.fingerprint : '',
       choices: Array.isArray(value.choices) ? value.choices : undefined,
+      // Options come off disk, so validate rather than trust: a malformed
+      // entry here would render an unlabelled button that still sends a digit.
+      options: Array.isArray(value.options)
+        ? value.options.filter(
+            (option): option is { index: number; label: string } =>
+              Boolean(option) &&
+              typeof (option as { index?: unknown }).index === 'number' &&
+              Number.isFinite((option as { index: number }).index) &&
+              typeof (option as { label?: unknown }).label === 'string' &&
+              (option as { label: string }).label.length > 0
+          )
+        : undefined,
       risk: value.risk,
       riskReason: typeof value.riskReason === 'string' ? value.riskReason : undefined
     }

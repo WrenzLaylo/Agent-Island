@@ -36,6 +36,19 @@ export type RiskLevel = 'low' | 'elevated' | 'high' | 'unknown'
 
 export type ApprovalDecision = 'once' | 'session' | 'always' | 'deny'
 
+/**
+ * A numbered option exactly as the agent printed it.
+ *
+ * Plan mode and ordinary questions offer options that no fixed vocabulary can
+ * express — "Yes, and auto-accept edits", "No, keep planning", "Postgres".
+ * They are shown verbatim and answered by their own digit, so the island never
+ * has to claim an option means something it does not.
+ */
+export interface PromptOption {
+  index: number
+  label: string
+}
+
 export type TerminalInputKind = 'plan' | 'selection' | 'question' | 'authentication' | 'unsupported'
 
 /**
@@ -97,6 +110,13 @@ export interface ApprovalRequest {
   choices?: ApprovalDecision[]
   /** Registry session that raised this, when it came from an `island` wrapper. */
   sessionId?: string
+  /** Numbered options verbatim, when the agent offered a list. */
+  options?: PromptOption[]
+  /**
+   * False when the panel is a question rather than a permission grant. Such a
+   * request must not be rendered with approve/deny language.
+   */
+  isPermission?: boolean
   /**
    * Which terminal asked, e.g. "Windows Terminal". Two sessions of the same
    * agent are otherwise indistinguishable on the card, and approving the wrong
