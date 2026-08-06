@@ -13,6 +13,7 @@
  *     be removed exactly, and the original file is backed up once.
  */
 import { app } from 'electron'
+import { execFileSync } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -169,6 +170,102 @@ function powerShellProfilePath(): string {
   return join(docs, 'WindowsPowerShell', 'Microsoft.PowerShell_profile.ps1')
 }
 
+/** PowerShell 7+ reads a different profile than Windows PowerShell 5.1. */
+function pwshProfilePath(): string {
+  return join(homedir(), 'Documents', 'PowerShell', 'Microsoft.PowerShell_profile.ps1')
+}
+
+/*
+ * cmd.exe has no profile. The only startup hook is the Command Processor
+ * `AutoRun` registry value, which cmd executes when it starts — including for
+ * non-interactive `cmd /c` invocations made by other programs. Two rules follow:
+ *
+ *  - The script must print nothing, ever. Anything it writes lands in the
+ *    output of every `cmd /c` on the machine and breaks tools that parse it.
+ *  - It must be chained, not overwritten. Clink and others use AutoRun too, so
+ *    an existing value is preserved and only our own segment is removed on
+ *    uninstall.
+ *
+ * cmd has no functions, so the commands are doskey macros. Those only apply to
+ * interactive sessions, which is the behaviour we want anyway: a batch script
+ * calling `claude` keeps calling the real binary.
+ */
+const AUTORUN_SCRIPT = 'cmd-autorun.cmd'
+
+function cmdAutoRunPath(): string {
+  return join(launcherDir(), AUTORUN_SCRIPT)
+}
+
+function writeCmdAutoRunScript(): void {
+  const launcher = join(launcherDir(), 'island.cmd')
+  writeFileSync(
+    cmdAutoRunPath(),
+    [
+      '@echo off',
+      'rem Agent Island cmd.exe integration. Silent by design.',
+      `if not exist "${launcher}" goto :eof`,
+      `set "PATH=${launcherDir()};%PATH%"`,
+      `doskey claude="${launcher}" claude $*`,
+      `doskey codex="${launcher}" codex $*`,
+      `doskey hermes="${launcher}" hermes $*`,
+      ''
+    ].join('\r\n'),
+    'utf8'
+  )
+}
+
+function readAutoRun(): string {
+  try {
+    const out = execFileSync(
+      'reg.exe',
+      ['query', 'HKCU\\Software\\Microsoft\\Command Processor', '/v', 'AutoRun'],
+      { encoding: 'utf8', windowsHide: true }
+    )
+    const match = /AutoRun\s+REG_[A-Z_]+\s+(.*)/.exec(out)
+    return match ? match[1].trim() : ''
+  } catch {
+    return ''
+  }
+}
+
+function writeAutoRun(value: string): void {
+  if (value) {
+    execFileSync(
+      'reg.exe',
+      ['add', 'HKCU\\Software\\Microsoft\\Command Processor', '/v', 'AutoRun', '/t', 'REG_SZ', '/d', value, '/f'],
+      { windowsHide: true }
+    )
+  } else {
+    execFileSync(
+      'reg.exe',
+      ['delete', 'HKCU\\Software\\Microsoft\\Command Processor', '/v', 'AutoRun', '/f'],
+      { windowsHide: true }
+    )
+  }
+}
+
+function autoRunSegment(): string {
+  return `if exist "${cmdAutoRunPath()}" call "${cmdAutoRunPath()}"`
+}
+
+function installCmdAutoRun(): void {
+  writeCmdAutoRunScript()
+  const existing = readAutoRun()
+  if (existing.includes(AUTORUN_SCRIPT)) return
+  writeAutoRun(existing ? `${existing} & ${autoRunSegment()}` : autoRunSegment())
+}
+
+function removeCmdAutoRun(): void {
+  const existing = readAutoRun()
+  if (!existing.includes(AUTORUN_SCRIPT)) return
+  const kept = existing
+    .split('&')
+    .map((part) => part.trim())
+    .filter((part) => part && !part.includes(AUTORUN_SCRIPT))
+    .join(' & ')
+  writeAutoRun(kept)
+}
+
 function bashProfilePath(): string {
   return join(homedir(), '.bashrc')
 }
@@ -214,10 +311,24 @@ export function installShellShims(): ShimResult {
   }
 
   try {
+    writeProfile(pwshProfilePath(), powerShellBlock())
+    installed.push(pwshProfilePath())
+  } catch (error) {
+    errors.push(`PowerShell 7 profile: ${String(error)}`)
+  }
+
+  try {
     writeProfile(bashProfilePath(), bashBlock())
     installed.push(bashProfilePath())
   } catch (error) {
     errors.push(`.bashrc: ${String(error)}`)
+  }
+
+  try {
+    installCmdAutoRun()
+    installed.push('cmd.exe (AutoRun)')
+  } catch (error) {
+    errors.push(`cmd.exe: ${String(error)}`)
   }
 
   return { ok: installed.length > 0, installed, errors }
@@ -226,7 +337,7 @@ export function installShellShims(): ShimResult {
 export function removeShellShims(): ShimResult {
   const installed: string[] = []
   const errors: string[] = []
-  for (const path of [powerShellProfilePath(), bashProfilePath()]) {
+  for (const path of [powerShellProfilePath(), pwshProfilePath(), bashProfilePath()]) {
     try {
       if (existsSync(path)) {
         writeProfile(path, null)
@@ -235,6 +346,12 @@ export function removeShellShims(): ShimResult {
     } catch (error) {
       errors.push(`${path}: ${String(error)}`)
     }
+  }
+  try {
+    removeCmdAutoRun()
+    installed.push('cmd.exe (AutoRun)')
+  } catch (error) {
+    errors.push(`cmd.exe: ${String(error)}`)
   }
   return { ok: errors.length === 0, installed, errors }
 }

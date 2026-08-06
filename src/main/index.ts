@@ -8,13 +8,19 @@ import {
   screen,
   Tray
 } from 'electron'
-import { existsSync } from 'node:fs'
+import { existsSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { discoverAgents } from './agents/discover'
 import type { AgentDiscoveryResult, DiscoveredAgent } from './agents/discover'
 import { SessionWatcher } from './agents/session-watcher'
 import { ApprovalBridgeWatcher, writeDecision } from './agents/approval-bridge'
-import { ensureLauncherScripts, installShellShims, removeShellShims, shimStatus } from './agents/shell-shims'
+import {
+  ensureLauncherScripts,
+  installShellShims,
+  removeShellShims,
+  shimStatus,
+  type ShimResult
+} from './agents/shell-shims'
 import { getWindowRect, raiseWindow } from '../node/win32-windows'
 import {
   flushPersistedStore,
@@ -788,11 +794,19 @@ function wireSessionEvents(): void {
 }
 
 /**
+ * One-shot CLI commands run without contending for the single-instance lock:
+ * they do a little filesystem work and exit, and refusing them while the island
+ * happens to be open would make them useless exactly when you want them.
+ */
+const SHIM_COMMANDS = ['--install-shims', '--remove-shims', '--shim-status']
+const shimCommand = process.argv.find((arg) => SHIM_COMMANDS.includes(arg))
+
+/**
  * Two copies of Agent Island share one userData directory, one settings file,
  * one session registry and one set of global shortcuts, so a second launch
  * surfaces the existing island instead of starting a rival one.
  */
-const hasInstanceLock = app.requestSingleInstanceLock()
+const hasInstanceLock = shimCommand ? true : app.requestSingleInstanceLock()
 
 if (!hasInstanceLock) {
   app.quit()
@@ -802,7 +816,31 @@ app.on('second-instance', () => {
   showIsland({ focus: true })
 })
 
+/**
+ * `--install-shims` / `--remove-shims` / `--shim-status`, so shell integration
+ * can be managed without the GUI — useful for scripted setup, and for checking
+ * what is actually on disk when the island reports something unexpected.
+ */
+async function runShimCommand(command: string): Promise<void> {
+  loadPersistedStore()
+  ensureLauncherScripts()
+  if (command === '--shim-status') {
+    const status = shimStatus()
+    process.stdout.write(`${JSON.stringify(status, null, 2)}\n`)
+  } else {
+    const result = command === '--install-shims' ? installShellShims() : removeShellShims()
+    updateSettings({ shellShimsInstalled: command === '--install-shims' && result.ok })
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
+  }
+  app.exit(0)
+}
+
 async function bootstrap(): Promise<void> {
+  if (shimCommand) {
+    await runShimCommand(shimCommand)
+    return
+  }
+
   loadPersistedStore()
   // Regenerate `island` / `island.cmd` on every launch so the command exists
   // (and points at the current install) whether or not shell integration is on.
