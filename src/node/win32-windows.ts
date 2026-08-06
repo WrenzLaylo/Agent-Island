@@ -202,6 +202,21 @@ export async function getWindowRect(
   }
 }
 
+/**
+ * Handle of the window the user is currently working in. Used to stay quiet
+ * when a prompt arrives in a terminal they are already looking at.
+ */
+export async function foregroundWindow(): Promise<number | null> {
+  if (process.platform !== 'win32') return null
+  try {
+    const out = await runPowerShell(`${WIN32_TYPE}\n[int64][AIWin]::GetForegroundWindow()`)
+    const value = Number(out.trim())
+    return Number.isFinite(value) && value > 0 ? value : null
+  } catch {
+    return null
+  }
+}
+
 /** Cheap liveness check used when validating registry entries. */
 export async function windowExists(hwnd: number): Promise<boolean> {
   if (process.platform !== 'win32' || !Number.isFinite(hwnd) || hwnd <= 0) return false

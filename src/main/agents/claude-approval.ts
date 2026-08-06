@@ -91,9 +91,31 @@ function classifyChoice(label: string): ApprovalDecision | null {
   return null
 }
 
+/**
+ * How much output may follow the choice list before the panel is considered
+ * answered and gone.
+ *
+ * This is scanning a replay buffer, not the visible screen, so an answered
+ * panel stays in the text indefinitely. Without this check the detector
+ * re-finds it on the very next chunk and raises the same approval again —
+ * forever, immediately after the user approves it.
+ */
+const LIVE_TAIL_CHARS = 800
+
 export function detectClaudeApprovalPanel(rawOutput: string): ClaudeApprovalDetection | null {
   const text = normalizeTerminalText(rawOutput)
-  const lines = text.split('\n').map(cleanUiLine)
+  const trimmed = text.trimEnd()
+  const rawLines = trimmed.split('\n')
+
+  // Character offset of each line, so "is this panel still at the live end of
+  // the output?" can be answered below.
+  const offsets: number[] = []
+  let cursor = 0
+  for (const line of rawLines) {
+    offsets.push(cursor)
+    cursor += line.length + 1
+  }
+  const lines = rawLines.map(cleanUiLine)
 
   // Work backwards: only the newest panel is live, anything earlier is
   // scrollback from a request that has already been answered.
@@ -138,6 +160,12 @@ export function detectClaudeApprovalPanel(rawOutput: string): ClaudeApprovalDete
   // list in ordinary output cannot satisfy this.
   if (!choices.some((choice) => choice.key === 'once')) return null
   if (!choices.some((choice) => choice.key === 'deny')) return null
+
+  // Still on screen? Once the user answers, Claude prints the tool result and
+  // the panel falls further and further behind the end of the buffer.
+  const lastChoiceLine = rawChoices.at(-1)?.line ?? questionLine
+  const endOfPanel = offsets[lastChoiceLine] + rawLines[lastChoiceLine].length
+  if (trimmed.length - endOfPanel > LIVE_TAIL_CHARS) return null
 
   const question = lines[questionLine]
   const body = lines
@@ -216,6 +244,9 @@ export function updateClaudeApprovalTracker(input: {
   }
 
   if (!detection) {
+    // The panel is gone, so forget what was answered. A genuinely new request
+    // for the same command later must be allowed to raise again.
+    next.lastFingerprint = null
     if (next.pending) {
       const cleared: ApprovalRequest = {
         ...next.pending,
@@ -231,6 +262,13 @@ export function updateClaudeApprovalTracker(input: {
   }
 
   if (next.pending && next.pending.fingerprint === detection.fingerprint) {
+    return { state: next }
+  }
+
+  // Already answered, but the panel has not scrolled clear of the live window
+  // yet. Re-raising here is what made an approved request pop straight back up
+  // and ask again.
+  if (!next.pending && next.lastFingerprint === detection.fingerprint) {
     return { state: next }
   }
 

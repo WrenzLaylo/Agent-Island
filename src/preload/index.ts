@@ -27,7 +27,11 @@ export interface IslandApi {
     decision: ApprovalDecision
   }) => Promise<{ ok: boolean; error?: string }>
   onSessionPrompt: (
-    handler: (payload: { prompt: SessionPromptRecord; session: AgentSessionRecord }) => void
+    handler: (payload: {
+      prompt: SessionPromptRecord
+      session: AgentSessionRecord
+      terminalFocused: boolean
+    }) => void
   ) => () => void
   onSessionPromptCleared: (handler: (prompt: SessionPromptRecord) => void) => () => void
   onSessionAdded: (handler: (session: AgentSessionRecord) => void) => () => void
@@ -88,7 +92,11 @@ const api: IslandApi = {
   onSessionPrompt: (handler) => {
     const listener = (
       _event: Electron.IpcRendererEvent,
-      payload: { prompt: SessionPromptRecord; session: AgentSessionRecord }
+      payload: {
+        prompt: SessionPromptRecord
+        session: AgentSessionRecord
+        terminalFocused: boolean
+      }
     ) => handler(payload)
     ipcRenderer.on('island:session-prompt', listener)
     return () => ipcRenderer.removeListener('island:session-prompt', listener)

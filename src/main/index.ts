@@ -21,7 +21,7 @@ import {
   shimStatus,
   type ShimResult
 } from './agents/shell-shims'
-import { getWindowRect, raiseWindow } from '../node/win32-windows'
+import { foregroundWindow, getWindowRect, raiseWindow } from '../node/win32-windows'
 import {
   flushPersistedStore,
   getDisplayLayout,
@@ -783,9 +783,19 @@ function wireBridgeEvents(): void {
 
 function wireSessionEvents(): void {
   sessionWatcher.on('prompt-raised', (prompt, session) => {
-    const focus = prompt.kind === 'handoff' || getSettings().autoExpandApprovals
-    showIsland({ focus })
-    mainWindow?.webContents.send('island:session-prompt', { prompt, session })
+    void (async () => {
+      // If the user is already looking at the terminal that raised this, the
+      // island has nothing to add — the prompt is right in front of them, and
+      // popping open over it is pure nuisance. Stay collapsed and let the pill
+      // carry the state instead.
+      const fg = session.hwnd == null ? null : await foregroundWindow()
+      const terminalFocused = fg != null && fg === session.hwnd
+
+      if (!terminalFocused) {
+        showIsland({ focus: prompt.kind === 'handoff' || getSettings().autoExpandApprovals })
+      }
+      mainWindow?.webContents.send('island:session-prompt', { prompt, session, terminalFocused })
+    })()
   })
   sessionWatcher.on('prompt-cleared', (prompt) => {
     mainWindow?.webContents.send('island:session-prompt-cleared', prompt)

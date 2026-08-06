@@ -180,4 +180,68 @@ describe('claude approval detection', () => {
     expect(detected).not.toBeNull()
     expect(detected?.command).toBe('Bash(curl -sS https://example.com -o /dev/null)')
   })
+
+  it('does not ask again once the answered panel is still in the buffer', () => {
+    // The exact reported failure: approve, and the pill immediately asks
+    // again, forever. The panel text stays in the replay buffer after it is
+    // answered, so the detector kept re-finding it.
+    const raised = updateClaudeApprovalTracker({
+      state: createApprovalTrackerState(),
+      chunkOrFullBuffer: BASH_APPROVAL,
+      cwd: 'C:/project',
+      processAlive: true,
+      now: 1,
+      makeId: () => 'claude-1'
+    })
+    expect(raised.raised?.id).toBe('claude-1')
+
+    // The wrapper answers and clears `pending`, keeping the fingerprint.
+    const answered = {
+      pending: null,
+      lastFingerprint: raised.state.pending?.fingerprint ?? null,
+      responseKeys: null
+    }
+
+    const again = updateClaudeApprovalTracker({
+      state: answered,
+      chunkOrFullBuffer: BASH_APPROVAL,
+      cwd: 'C:/project',
+      processAlive: true,
+      now: 2,
+      makeId: () => 'claude-2'
+    })
+    expect(again.raised).toBeUndefined()
+  })
+
+  it('treats a panel buried behind later output as gone', () => {
+    const withResult = BASH_APPROVAL + NL + 'x'.repeat(1200)
+    expect(detectClaudeApprovalPanel(withResult)).toBeNull()
+  })
+
+  it('allows the same command to be requested again later', () => {
+    const answered = {
+      pending: null,
+      lastFingerprint: 'stale-fingerprint',
+      responseKeys: null
+    }
+    // Panel gone: the remembered fingerprint is dropped...
+    const quiet = updateClaudeApprovalTracker({
+      state: answered,
+      chunkOrFullBuffer: 'Ran it, exit code 0.',
+      cwd: 'C:/project',
+      processAlive: true,
+      now: 3
+    })
+    expect(quiet.state.lastFingerprint).toBeNull()
+    // ...so a fresh request for the same command still reaches the user.
+    const fresh = updateClaudeApprovalTracker({
+      state: quiet.state,
+      chunkOrFullBuffer: BASH_APPROVAL,
+      cwd: 'C:/project',
+      processAlive: true,
+      now: 4,
+      makeId: () => 'claude-3'
+    })
+    expect(fresh.raised?.id).toBe('claude-3')
+  })
 })

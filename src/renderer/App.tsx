@@ -285,14 +285,15 @@ export function App() {
 
     void api.discoverAgents().then(applyDiscovery)
 
-    const enqueueApproval = (request: ApprovalRequest, playSound = true) => {
+    const enqueueApproval = (request: ApprovalRequest, playSound = true, mayExpand = true) => {
       if (!request?.id || !request.agentId) return
-      if (settingsRef.current.autoExpandApprovals) setPanel(null)
+      const autoExpand = mayExpand && settingsRef.current.autoExpandApprovals
+      if (autoExpand) setPanel(null)
       setAttentionNonce((value) => value + 1)
       dispatch({
         type: 'ENQUEUE_APPROVAL',
         request,
-        autoExpand: settingsRef.current.autoExpandApprovals
+        autoExpand
       })
       if (
         playSound &&
@@ -434,14 +435,16 @@ export function App() {
       refreshSessions()
     })
 
-    const offSessionPrompt = api.onSessionPrompt(({ prompt, session }) => {
+    const offSessionPrompt = api.onSessionPrompt(({ prompt, session, terminalFocused }) => {
+      // The user is already in the terminal that asked. Track the prompt so the
+      // pill reflects it, but do not open over the thing they are reading.
       if (prompt.kind === 'approval') {
-        enqueueApproval(sessionPromptToApproval(prompt, session))
+        enqueueApproval(sessionPromptToApproval(prompt, session), true, !terminalFocused)
         return
       }
       setTerminalInput(sessionPromptToHandoff(prompt, session))
       setAttentionNonce((value) => value + 1)
-      setPanel('handoff')
+      if (!terminalFocused) setPanel('handoff')
       dispatch({ type: 'SELECT_AGENT', agentId: prompt.agentId, open: false })
       dispatch({
         type: 'SET_AGENT_STATUS',
@@ -450,7 +453,7 @@ export function App() {
         activityLabel: `Needs input in ${session.terminalLabel}`,
         available: true
       })
-      dispatch({ type: 'EXPAND' })
+      if (!terminalFocused) dispatch({ type: 'EXPAND' })
       if (settingsRef.current.approvalSounds) playApprovalCue()
     })
 
