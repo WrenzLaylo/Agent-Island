@@ -653,8 +653,7 @@ function createWindow(): void {
     // the renderer, not by a `raised` event, so they would otherwise open an
     // expanded panel on a window that has never held focus — and "click outside
     // to collapse" rides on `blur`.
-    const restoringApproval = bridgeWatcher.list().length > 0 && getSettings().autoExpandApprovals
-    showIsland({ focus: restoringApproval })
+    showIsland()
   })
 
   mainWindow.on('closed', () => {
@@ -771,9 +770,7 @@ function registerIpc(): void {
 
 function wireBridgeEvents(): void {
   bridgeWatcher.on('raised', (request) => {
-    // Only steal focus when the island is actually going to open in front of
-    // the user; with auto-expand off it just updates a count in the pill.
-    showIsland({ focus: getSettings().autoExpandApprovals })
+    showIsland()
     mainWindow?.webContents.send('island:approval', request)
   })
   bridgeWatcher.on('cleared', (request) => {
@@ -791,9 +788,12 @@ function wireSessionEvents(): void {
       const fg = session.hwnd == null ? null : await foregroundWindow()
       const terminalFocused = fg != null && fg === session.hwnd
 
-      if (!terminalFocused) {
-        showIsland({ focus: prompt.kind === 'handoff' || getSettings().autoExpandApprovals })
-      }
+      // Never take focus for a prompt. The user is very likely typing
+      // somewhere, and stealing the keyboard to announce something they can
+      // read at a glance costs them their cursor position. Collapse-on-click
+      // no longer depends on this: the idle retract handles an island nobody
+      // is using.
+      if (!terminalFocused) showIsland()
       mainWindow?.webContents.send('island:session-prompt', { prompt, session, terminalFocused })
     })()
   })

@@ -548,16 +548,22 @@ export function App() {
    * the global shortcut and attention prompts now take focus too.
    */
   const isExpandedPresentation = state.mode !== 'collapsed' || panel !== null
+  const hasAttention = queueCount > 0 || terminalInput !== null
   useEffect(() => {
     if (!isExpandedPresentation) return
     if (windowFocused || state.hovered || isDragging) return
+    // A prompt opens without taking focus, so it has to stay long enough to
+    // read and reach with the mouse; an island that merely drifted open should
+    // get out of the way immediately. Either way the pill keeps carrying the
+    // attention state, so nothing is lost by retracting.
+    const delay = hasAttention ? 6000 : 1000
     const timer = window.setTimeout(() => {
       if (dragRef.current?.active) return
       setPanel(null)
       dispatch({ type: 'COLLAPSE' })
-    }, 1000)
+    }, delay)
     return () => window.clearTimeout(timer)
-  }, [isExpandedPresentation, windowFocused, state.hovered, isDragging])
+  }, [isExpandedPresentation, windowFocused, state.hovered, isDragging, hasAttention])
 
   useEffect(() => {
     if (state.mode !== 'success' && state.mode !== 'error') return
