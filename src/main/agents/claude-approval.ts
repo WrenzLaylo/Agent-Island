@@ -70,6 +70,9 @@ const NO_RE = /^No\b/i
 const CHROME_RE =
   /(esc to cancel|tab to amend|ctrl\+[a-z]|shift\+tab|to cycle|^waiting|^working|^cooked|^\W*$|accept edits on|to explain)/i
 
+/** A tool invocation line, e.g. `Bash(curl …)` or `Edit(src/index.ts)`. */
+const TOOL_CALL_RE = /^[A-Z][A-Za-z]*\(.*\)$/
+
 const EDIT_QUESTION_RE = /\b(edit|create|write|update|apply .*changes?) \b/i
 const COMMAND_QUESTION_RE = /\bproceed\b|\brun\b/i
 
@@ -179,8 +182,11 @@ export function detectClaudeApprovalPanel(rawOutput: string): ClaudeApprovalDete
   const isEdit = EDIT_QUESTION_RE.test(question)
   const isCommand = !isEdit && COMMAND_QUESTION_RE.test(question)
 
-  // The command or diff sits above the question, after the panel's own heading.
-  const command = body.join('\n').trim() || question
+  // Prefer the tool-invocation line — `Bash(…)`, `Edit(…)` — which is the
+  // actual request and is stable across redraws. The surrounding body is not:
+  // Claude repaints spinner frames and key hints there several times a second.
+  const toolLine = [...body].reverse().find((line) => TOOL_CALL_RE.test(line))
+  const command = toolLine ?? body.join('\n').trim() ?? question
 
   const baseRisk = classifyCommandRisk(command)
   const risk = isEdit
@@ -202,9 +208,18 @@ export function detectClaudeApprovalPanel(rawOutput: string): ClaudeApprovalDete
     command,
     description: question,
     choices,
+    /*
+     * Identity must come only from parts of the panel that do not change while
+     * it sits on screen: the question, the tool call, and the choice labels.
+     *
+     * This previously hashed the whole body above the question, which Claude
+     * repaints continuously — so every redraw produced a new fingerprint, the
+     * "already answered" guard never matched, and an approved request was
+     * raised again and again.
+     */
     fingerprint: fingerprintDetection({
-      command,
-      choices: choices.map((choice) => `${choice.index}:${choice.key}`).join(',')
+      command: `${question}|${toolLine ?? ''}`,
+      choices: choices.map((choice) => `${choice.index}:${choice.key}:${choice.label}`).join(',')
     }),
     risk: risk.level,
     riskReason,

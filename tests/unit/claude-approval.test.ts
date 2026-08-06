@@ -244,4 +244,43 @@ describe('claude approval detection', () => {
     })
     expect(fresh.raised?.id).toBe('claude-3')
   })
+
+  it('keeps one identity while the TUI repaints the panel', () => {
+    // The cause of the reported loop. Claude repaints spinner frames and key
+    // hints above the question several times a second. Fingerprinting the
+    // whole body meant every repaint looked like a brand new request, so an
+    // approved one was raised again and again.
+    const frame = (spinner: string, hint: string) =>
+      panel([
+        hint,
+        'Bash(curl -sS https://example.com -o /dev/null)',
+        '  ' + spinner,
+        '',
+        'Do you want to proceed?',
+        '1. Yes',
+        '2. Yes, and don' + String.fromCharCode(8217) + 't ask again for: curl *',
+        '3. No'
+      ])
+
+    const a = detectClaudeApprovalPanel(frame('Waiting…', 'Esc to cancel · Tab to amend'))
+    const b = detectClaudeApprovalPanel(frame('Working…', 'Esc to cancel · ctrl+e to explain'))
+    expect(a).not.toBeNull()
+    expect(b).not.toBeNull()
+    expect(a?.fingerprint).toBe(b?.fingerprint)
+  })
+
+  it('still separates two different commands', () => {
+    const forCommand = (cmd: string) =>
+      panel([
+        'Bash(' + cmd + ')',
+        '',
+        'Do you want to proceed?',
+        '1. Yes',
+        '2. Yes, and don' + String.fromCharCode(8217) + 't ask again for: curl *',
+        '3. No'
+      ])
+    const one = detectClaudeApprovalPanel(forCommand('curl -sS https://example.com'))
+    const two = detectClaudeApprovalPanel(forCommand('curl -sS https://evil.test'))
+    expect(one?.fingerprint).not.toBe(two?.fingerprint)
+  })
 })
