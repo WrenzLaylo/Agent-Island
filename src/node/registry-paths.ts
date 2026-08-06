@@ -25,8 +25,13 @@ export function decisionsDir(root = registryRoot()): string {
   return join(root, 'decisions')
 }
 
+export function focusDir(root = registryRoot()): string {
+  return join(root, 'focus')
+}
+
 export function ensureRegistryDirs(root = registryRoot()): void {
   mkdirSync(sessionsDir(root), { recursive: true })
   mkdirSync(promptsDir(root), { recursive: true })
   mkdirSync(decisionsDir(root), { recursive: true })
+  mkdirSync(focusDir(root), { recursive: true })
 }

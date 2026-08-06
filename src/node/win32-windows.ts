@@ -203,6 +203,49 @@ export async function getWindowRect(
 }
 
 /**
+ * Activate a specific tab inside a terminal window, by its tab title.
+ *
+ * Windows Terminal exposes each tab as a UI Automation `TabItem` supporting
+ * `SelectionItemPattern`, so a tab really can be activated from another
+ * process — verified switching a three-tab window between named tabs. There is
+ * no equivalent for conhost or mintty, which have no tabs at all, so a `false`
+ * return simply means the caller should settle for raising the window.
+ */
+export async function focusTabByTitle(hwnd: number, tabTitle: string): Promise<boolean> {
+  if (process.platform !== 'win32') return false
+  if (!Number.isFinite(hwnd) || hwnd <= 0 || !tabTitle) return false
+  const safe = tabTitle.replace(/'/g, "''")
+  const script = `
+Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName UIAutomationTypes
+$root = [System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]${hwnd})
+if (-not $root) { 'no'; exit }
+$cond = New-Object System.Windows.Automation.PropertyCondition(
+  [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+  [System.Windows.Automation.ControlType]::TabItem)
+$tabs = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $cond)
+$hit = $null
+foreach ($t in $tabs) { if ($t.Current.Name -eq '${safe}') { $hit = $t; break } }
+if (-not $hit) { 'no'; exit }
+try {
+  $hit.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+  'yes'
+} catch { 'no' }
+`
+  // The agent is repainting its title the whole time, so the marker may lose a
+  // race. Retry briefly rather than silently settling for the wrong tab.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      if ((await runPowerShell(script)).trim() === 'yes') return true
+    } catch {
+      return false
+    }
+    await new Promise((resolve) => setTimeout(resolve, 180))
+  }
+  return false
+}
+
+/**
  * Handle of the window the user is currently working in. Used to stay quiet
  * when a prompt arrives in a terminal they are already looking at.
  */

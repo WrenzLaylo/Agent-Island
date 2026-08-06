@@ -8,11 +8,14 @@ import {
   screen,
   Tray
 } from 'electron'
-import { existsSync, writeFileSync } from 'node:fs'
+import { existsSync, rmSync, writeFileSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { discoverAgents } from './agents/discover'
 import type { AgentDiscoveryResult, DiscoveredAgent } from './agents/discover'
 import { SessionWatcher } from './agents/session-watcher'
+import { ensureRegistryDirs, focusDir } from '../node/registry-paths'
+import type { AgentSessionRecord } from '../shared/session-registry'
 import { ApprovalBridgeWatcher, writeDecision } from './agents/approval-bridge'
 import {
   ensureLauncherScripts,
@@ -20,7 +23,7 @@ import {
   removeShellShims,
   shimStatus
 } from './agents/shell-shims'
-import { foregroundWindow, getWindowRect, raiseWindow } from '../node/win32-windows'
+import { focusTabByTitle, foregroundWindow, getWindowRect, raiseWindow } from '../node/win32-windows'
 import {
   flushPersistedStore,
   getDisplayLayout,
@@ -565,6 +568,11 @@ async function handoffToTerminal(
     }
   }
 
+  // Ask the session to mark its own tab, so the right *tab* comes forward and
+  // not merely the right window. Best effort: terminals without tabs, and any
+  // wrapper too old to answer, just fall through to raising the window.
+  await focusSessionTab(session)
+
   const area = islandDisplay().workArea
   // Only relocate when the terminal is on a different display, and only when
   // the user has not opted out of having their layout rearranged.
@@ -583,6 +591,34 @@ async function handoffToTerminal(
     return { ok: false, error: 'The terminal window could not be raised.' }
   }
   return { ok: true }
+}
+
+/** How long to give the wrapper to paint the marker before looking for it. */
+const FOCUS_MARKER_WAIT_MS = 450
+
+async function focusSessionTab(session: AgentSessionRecord): Promise<void> {
+  if (session.hwnd == null || session.terminalKind !== 'windows-terminal') return
+  const marker = `agent-island-focus-${randomUUID()}`
+  const requestPath = join(focusDir(), `${session.id}.json`)
+  try {
+    ensureRegistryDirs()
+    writeFileSync(
+      requestPath,
+      JSON.stringify({ sessionId: session.id, marker, requestedAt: Date.now() }, null, 2),
+      'utf8'
+    )
+    await new Promise((resolve) => setTimeout(resolve, FOCUS_MARKER_WAIT_MS))
+    await focusTabByTitle(session.hwnd, marker)
+  } catch (error) {
+    console.warn('Could not focus the session tab:', error)
+  } finally {
+    // Removing the request is what tells the wrapper to restore its title.
+    try {
+      rmSync(requestPath, { force: true })
+    } catch {
+      // ignore
+    }
+  }
 }
 
 async function windowIsOnDisplay(

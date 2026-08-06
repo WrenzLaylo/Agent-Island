@@ -85,16 +85,19 @@ To remove it later: **Settings → Terminals → Remove**, or
 
 ## Terminal support
 
-| Terminal | Session detected | Window can be raised |
-|---|---|---|
-| Windows Terminal | yes | yes |
-| PowerShell / cmd (conhost) | yes | yes |
-| Git Bash (mintty) | yes | yes |
-| VS Code integrated terminal | yes | no — it is a panel, not a window |
+| Terminal | Session detected | Window raised | Correct **tab** focused |
+|---|---|---|---|
+| Windows Terminal | yes | yes | yes |
+| PowerShell / cmd (conhost) | yes | yes | n/a — no tabs |
+| Git Bash (mintty) | yes | yes | n/a — no tabs |
+| VS Code integrated terminal | yes | no — it is a panel, not a window | no |
 
-Tab and pane precision is not possible: no Windows API activates a specific
-terminal tab from another process, so handoff is window-level. If the agent's
-tab is not the active one you will land on the right window, wrong tab.
+Tab focusing works because Windows Terminal exposes each tab as a UI
+Automation `TabItem`. A tab cannot be identified in advance — agents rename
+their tab titles constantly — so the island asks at the moment you click:
+it writes a marker, the session paints it as its tab title, the island selects
+the tab carrying it, and the title is restored. Verified with two sessions
+sharing one window, each handoff landing on its own tab.
 
 Run `island --whoami` in any terminal to see what it resolves there.
 

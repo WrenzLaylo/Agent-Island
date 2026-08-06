@@ -42,10 +42,11 @@ import {
   SESSION_HEARTBEAT_MS,
   type AgentSessionRecord,
   type SessionDecisionRecord,
+  parseFocusRequest,
   type SessionPromptRecord,
   type TerminalKind
 } from '../shared/session-registry'
-import { decisionsDir, ensureRegistryDirs, promptsDir, sessionsDir } from '../node/registry-paths'
+import { decisionsDir, ensureRegistryDirs, focusDir, promptsDir, sessionsDir } from '../node/registry-paths'
 import { findWindowsByTitle } from '../node/win32-windows'
 
 /** Control bytes, named rather than embedded raw in source. */
@@ -64,6 +65,31 @@ const DECISION_POLL_MS = 200
  * does.
  */
 const IDLE_AFTER_MS = 2500
+
+/**
+ * Set this terminal's title.
+ *
+ * Both mechanisms are used because neither covers everything: SetConsoleTitleW
+ * (via `process.title`) drives Win32 consoles and Windows Terminal, while OSC 0
+ * drives mintty, VS Code and other xterm-compatible emulators, which have no
+ * Win32 console for the first call to act on.
+ *
+ * The OSC is written unconditionally: under ELECTRON_RUN_AS_NODE inside a
+ * ConPTY, `process.stdout.isTTY` reports false even when stdout really is the
+ * terminal, so gating on it silently disabled mintty support.
+ */
+function setTerminalTitle(value: string): void {
+  try {
+    process.title = value
+  } catch {
+    // Non-fatal; the OSC below may still work.
+  }
+  try {
+    process.stdout.write(`${OSC}0;${value}${BEL}`)
+  } catch {
+    // ignore
+  }
+}
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -98,25 +124,7 @@ function usage(): never {
  */
 async function resolveHostWindow(agentId: AgentId): Promise<{ hwnd: number | null; kind: TerminalKind; label: string }> {
   const marker = `agent-island-${randomUUID()}`
-  const setTitle = (value: string) => {
-    // SetConsoleTitleW — covers classic conhost and Windows Terminal.
-    try {
-      process.title = value
-    } catch {
-      // Non-fatal; the OSC below may still work.
-    }
-    // OSC 0 — covers mintty, VS Code and any xterm-compatible emulator, none of
-    // which have a Win32 console for the call above to act on.
-    //
-    // Written unconditionally: under ELECTRON_RUN_AS_NODE inside a ConPTY,
-    // `process.stdout.isTTY` reports false even when stdout really is the
-    // terminal, so gating on it silently disabled mintty support.
-    try {
-      process.stdout.write(`${OSC}0;${value}${BEL}`)
-    } catch {
-      // ignore
-    }
-  }
+  const setTitle = setTerminalTitle
 
   let matches: Awaited<ReturnType<typeof findWindowsByTitle>> = []
   let searchError: string | null = null
@@ -521,6 +529,38 @@ async function main(): Promise<void> {
   // ELECTRON_RUN_AS_NODE is a GUI-subsystem binary and never attaches to the
   // console, which is exactly how this happens — so say so rather than handing
   // the user a frozen screen full of escape codes.
+  /*
+   * The island cannot know which tab hosts this session — the agent renames the
+   * tab title constantly, so nothing set at startup survives. Instead the
+   * island asks, here and now: it drops a marker string, this session paints it
+   * as its title, the island finds the tab carrying it, and the title is put
+   * back. Same handshake as window resolution, just repeated on demand.
+   */
+  const focusRequestPath = join(focusDir(), `${id}.json`)
+  let focusMarkerActive = false
+  const focusPoll = setInterval(() => {
+    try {
+      if (!existsSync(focusRequestPath)) {
+        if (focusMarkerActive) {
+          focusMarkerActive = false
+          setTerminalTitle(agentId)
+        }
+        return
+      }
+      const request = parseFocusRequest(readFileSync(focusRequestPath, 'utf8'))
+      if (!request || request.sessionId !== id) return
+      // Re-assert every tick rather than setting it once. The agent repaints
+      // its own tab title continuously — Claude rewrites it to "Claude Code"
+      // within a few hundred milliseconds — so a marker written a single time
+      // is gone before the island can look for it.
+      focusMarkerActive = true
+      setTerminalTitle(request.marker)
+    } catch {
+      // The island removes the request either way; nothing here is critical.
+    }
+  }, 150)
+  focusPoll.unref?.()
+
   if (process.stdin.isTTY) {
     process.stdin.setRawMode(true)
   } else {
@@ -565,6 +605,8 @@ async function main(): Promise<void> {
     clearInterval(heartbeat)
     clearInterval(decisionPoll)
     clearInterval(busyTimer)
+    clearInterval(focusPoll)
+    safeRemove(focusRequestPath)
     files.cleanup()
     if (process.stdin.isTTY) {
       try {

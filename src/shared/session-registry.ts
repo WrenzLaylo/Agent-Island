@@ -70,6 +70,35 @@ export interface SessionPromptRecord {
   riskReason?: string
 }
 
+/**
+ * Island -> wrapper: "put this exact string in your tab title so I can find
+ * which tab you are".
+ *
+ * A tab cannot be identified up front — the agent renames the title constantly
+ * — so the marker is applied on demand, at the moment the user asks to be taken
+ * there, and removed again straight after.
+ */
+export interface SessionFocusRequest {
+  sessionId: string
+  marker: string
+  requestedAt: number
+}
+
+export function parseFocusRequest(raw: string): SessionFocusRequest | null {
+  try {
+    const value = JSON.parse(stripBom(raw)) as Partial<SessionFocusRequest>
+    if (typeof value.sessionId !== 'string' || !value.sessionId) return null
+    if (typeof value.marker !== 'string' || !value.marker) return null
+    return {
+      sessionId: value.sessionId,
+      marker: value.marker,
+      requestedAt: typeof value.requestedAt === 'number' ? value.requestedAt : Date.now()
+    }
+  } catch {
+    return null
+  }
+}
+
 export interface SessionDecisionRecord {
   sessionId: string
   promptId: string
