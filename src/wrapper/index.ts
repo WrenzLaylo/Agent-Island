@@ -30,6 +30,7 @@ import {
   type ApprovalTrackerState
 } from '../main/agents/hermes-approval'
 import { resolveCodexResponseKeys, updateCodexApprovalTracker } from '../main/agents/codex-approval'
+import { resolveClaudeResponseKeys, updateClaudeApprovalTracker } from '../main/agents/claude-approval'
 import {
   createTerminalInputTrackerState,
   updateTerminalInputTracker,
@@ -417,26 +418,31 @@ async function main(): Promise<void> {
   const scan = () => {
     const text = normalizeTerminalText(replay.length > SCAN_TAIL_CHARS ? replay.slice(-SCAN_TAIL_CHARS) : replay)
 
-    if (agentId === 'hermes' || agentId === 'codex') {
-      const update =
-        agentId === 'hermes'
-          ? updateHermesApprovalTracker({
+    const update =
+      agentId === 'hermes'
+        ? updateHermesApprovalTracker({
+            state: approval,
+            chunkOrFullBuffer: text,
+            agentId,
+            cwd: process.cwd(),
+            processAlive: true
+          })
+        : agentId === 'codex'
+          ? updateCodexApprovalTracker({
               state: approval,
               chunkOrFullBuffer: text,
-              agentId,
               cwd: process.cwd(),
               processAlive: true
             })
-          : updateCodexApprovalTracker({
+          : updateClaudeApprovalTracker({
               state: approval,
               chunkOrFullBuffer: text,
               cwd: process.cwd(),
               processAlive: true
             })
-      approval = update.state
-      if (update.cleared) clearPrompt()
-      if (update.raised) publishApproval(update.raised)
-    }
+    approval = update.state
+    if (update.cleared) clearPrompt()
+    if (update.raised) publishApproval(update.raised)
 
     const inputUpdate = updateTerminalInputTracker({
       state: terminalInput,
@@ -470,7 +476,9 @@ async function main(): Promise<void> {
     const keys =
       agentId === 'hermes'
         ? resolveHermesResponseKeys(approval, decision.choice)
-        : resolveCodexResponseKeys(approval, decision.choice)
+        : agentId === 'codex'
+          ? resolveCodexResponseKeys(approval, decision.choice)
+          : resolveClaudeResponseKeys(approval, decision.choice)
     if (keys.ok) {
       try {
         term.write(keys.keys)
