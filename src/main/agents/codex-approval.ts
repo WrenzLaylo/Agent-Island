@@ -244,7 +244,12 @@ export function updateCodexApprovalTracker(input: {
     superseded: false,
     source: 'codex-terminal',
     fingerprint: detection.fingerprint,
-    choices: detection.choices.map((choice) => choice.key)
+    choices: detection.choices.map((choice) => choice.key),
+    choiceOptions: detection.choices.map((choice) => ({
+      decision: choice.key,
+      index: choice.index,
+      label: choice.label
+    }))
   }
 
   next.pending = raised

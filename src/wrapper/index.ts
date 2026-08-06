@@ -408,6 +408,7 @@ async function main(): Promise<void> {
     fingerprint?: string
     choices?: ApprovalDecision[]
     options?: Array<{ index: number; label: string }>
+    choiceOptions?: Array<{ decision: ApprovalDecision; index: number; label: string }>
     isPermission?: boolean
   }) => {
     livePromptId = request.id
@@ -426,6 +427,7 @@ async function main(): Promise<void> {
       expiresAt: request.expiresAt,
       fingerprint: request.fingerprint ?? request.id,
       choices: isChoice ? undefined : request.choices,
+      choiceOptions: isChoice ? undefined : request.choiceOptions,
       options: request.options,
       risk: request.risk,
       riskReason: request.riskReason

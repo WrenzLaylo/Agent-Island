@@ -1,7 +1,13 @@
 import { motion } from 'framer-motion'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { APPROVAL_REARM_MS, approvalReArmed } from '@shared/approval-guard'
-import { AGENT_LABELS, type ApprovalDecision, type ApprovalRequest } from '@shared/contracts'
+import { verbatimOptions } from '@shared/approval-options'
+import {
+  AGENT_LABELS,
+  type ApprovalDecision,
+  type ApprovalRequest,
+  type DecisionOption
+} from '@shared/contracts'
 
 interface ApprovalCardProps {
   approval: ApprovalRequest
@@ -81,9 +87,33 @@ function DecisionIcon({ choice }: { choice: ApprovalDecision }) {
 
 export function ApprovalCard({ approval, approveEnabled, disabled = false, onDecision }: ApprovalCardProps) {
   const [confirmPermanent, setConfirmPermanent] = useState(false)
+  /*
+   * Prefer the agent's own wording and ordering. The fallback list exists for
+   * requests that carry no captured labels — the Hermes IPC bridge, and any
+   * wrapper older than this build — where inventing a phrase is the only
+   * option left.
+   */
+  const offered = useMemo(() => verbatimOptions(approval), [approval])
   const choices = useMemo(
     () => CHOICE_ORDER.filter((choice) => (approval.choices?.length ? approval.choices : ['once', 'deny']).includes(choice)),
     [approval.choices]
+  )
+  const rows = useMemo(
+    () =>
+      offered.length
+        ? offered.map((option) => ({
+            decision: option.decision,
+            index: option.index as number | null,
+            label: option.label,
+            hint: ''
+          }))
+        : choices.map((choice) => ({
+            decision: choice,
+            index: null,
+            label: choiceLabel(choice, approval),
+            hint: choiceHint(choice, approval)
+          })),
+    [offered, choices, approval]
   )
 
   useEffect(() => setConfirmPermanent(false), [approval.id])
@@ -176,22 +206,31 @@ export function ApprovalCard({ approval, approveEnabled, disabled = false, onDec
           </div>
         </motion.div>
       ) : (
-        <div className={`decision-list choices-${choices.length}`}>
-          {choices.map((choice) => {
-            const isDeny = choice === 'deny'
+        <div className={`decision-list choices-${rows.length}`}>
+          {rows.map((row) => {
+            const isDeny = row.decision === 'deny'
             const buttonDisabled = inert || (!isDeny && !approveEnabled)
             return (
               <motion.button
-                key={choice}
+                key={`${row.decision}-${row.index ?? 'x'}`}
                 type="button"
-                className={`decision-button decision-${choice}`}
+                className={`decision-button decision-${row.decision}`}
                 data-no-drag="true"
-                onClick={() => choose(choice)}
+                onClick={() => choose(row.decision)}
                 disabled={buttonDisabled}
                 whileTap={!buttonDisabled ? { scale: 0.985 } : undefined}
               >
-                <span className="decision-icon"><DecisionIcon choice={choice} /></span>
-                <span className="decision-copy"><strong>{choiceLabel(choice, approval)}</strong><small>{choiceHint(choice, approval)}</small></span>
+                {/* The digit is shown because it is literally what gets sent to
+                    the terminal, so the row is checkable against the panel. */}
+                {row.index != null ? (
+                  <span className="decision-index">{row.index}</span>
+                ) : (
+                  <span className="decision-icon"><DecisionIcon choice={row.decision} /></span>
+                )}
+                <span className="decision-copy">
+                  <strong>{row.label}</strong>
+                  {row.hint ? <small>{row.hint}</small> : null}
+                </span>
               </motion.button>
             )
           })}

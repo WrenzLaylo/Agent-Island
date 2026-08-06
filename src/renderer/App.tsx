@@ -161,6 +161,7 @@ function sessionPromptToApproval(
     // were rendered with Codex's wording.
     source: `${prompt.agentId}-terminal` as ApprovalRequest['source'],
     options: prompt.options,
+    choiceOptions: prompt.choiceOptions,
     isPermission: prompt.kind !== 'choice',
     fingerprint: prompt.fingerprint,
     choices: prompt.choices,

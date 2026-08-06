@@ -347,6 +347,11 @@ export function updateClaudeApprovalTracker(input: {
     source: 'claude-terminal',
     fingerprint: detection.fingerprint,
     choices: detection.choices.map((choice) => choice.key),
+    choiceOptions: detection.choices.map((choice) => ({
+      decision: choice.key,
+      index: choice.index,
+      label: choice.label
+    })),
     options: detection.options,
     isPermission: detection.isPermission
   }

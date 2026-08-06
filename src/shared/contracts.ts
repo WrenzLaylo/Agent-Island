@@ -49,6 +49,21 @@ export interface PromptOption {
   label: string
 }
 
+/**
+ * A classified decision together with the wording the agent actually printed.
+ *
+ * The island used to render its own phrases for these — "Allow permanently"
+ * in place of "Yes, and don't ask again for: curl *". That dropped the one
+ * thing that made the choice safe to make: its scope. The agent's own text is
+ * authoritative; the classification only decides which keystroke to send and
+ * which extra confirmation to require.
+ */
+export interface DecisionOption {
+  decision: ApprovalDecision
+  index: number
+  label: string
+}
+
 export type TerminalInputKind = 'plan' | 'selection' | 'question' | 'authentication' | 'unsupported'
 
 /**
@@ -112,6 +127,8 @@ export interface ApprovalRequest {
   sessionId?: string
   /** Numbered options verbatim, when the agent offered a list. */
   options?: PromptOption[]
+  /** Classified decisions paired with the agent's own wording. */
+  choiceOptions?: DecisionOption[]
   /**
    * False when the panel is a question rather than a permission grant. Such a
    * request must not be rendered with approve/deny language.

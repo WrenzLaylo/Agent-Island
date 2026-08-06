@@ -305,7 +305,10 @@ export function updateHermesApprovalTracker(input: {
     fingerprint: detection.fingerprint,
     choices: detection.choices
       .filter((choice): choice is DetectedHermesChoice & { key: ApprovalDecision } => choice.key !== 'view')
-      .map((choice) => choice.key)
+      .map((choice) => choice.key),
+    choiceOptions: detection.choices
+      .filter((choice): choice is DetectedHermesChoice & { key: ApprovalDecision } => choice.key !== 'view')
+      .map((choice) => ({ decision: choice.key, index: choice.index, label: choice.label }))
   }
 
   next.pending = raised

@@ -73,6 +73,15 @@ export interface SessionPromptRecord {
   choices?: Array<'once' | 'session' | 'always' | 'deny'>
   /** Numbered options verbatim. Meaningful for kind === 'choice'. */
   options?: Array<{ index: number; label: string }>
+  /**
+   * Classified decisions with the agent's own wording, so the island can show
+   * exactly what the terminal offered instead of paraphrasing it.
+   */
+  choiceOptions?: Array<{
+    decision: 'once' | 'session' | 'always' | 'deny'
+    index: number
+    label: string
+  }>
   risk?: 'low' | 'elevated' | 'high' | 'unknown'
   riskReason?: string
 }
@@ -176,6 +185,10 @@ export function parseSessionRecord(raw: string): AgentSessionRecord | null {
   }
 }
 
+function isApprovalDecisionValue(value: unknown): value is 'once' | 'session' | 'always' | 'deny' {
+  return value === 'once' || value === 'session' || value === 'always' || value === 'deny'
+}
+
 export function parsePromptRecord(raw: string): SessionPromptRecord | null {
   try {
     const value = JSON.parse(stripBom(raw)) as Partial<SessionPromptRecord>
@@ -197,6 +210,17 @@ export function parsePromptRecord(raw: string): SessionPromptRecord | null {
       choices: Array.isArray(value.choices) ? value.choices : undefined,
       // Options come off disk, so validate rather than trust: a malformed
       // entry here would render an unlabelled button that still sends a digit.
+      choiceOptions: Array.isArray(value.choiceOptions)
+        ? value.choiceOptions.filter(
+            (option): option is { decision: 'once' | 'session' | 'always' | 'deny'; index: number; label: string } =>
+              Boolean(option) &&
+              isApprovalDecisionValue((option as { decision?: unknown }).decision) &&
+              typeof (option as { index?: unknown }).index === 'number' &&
+              Number.isFinite((option as { index: number }).index) &&
+              typeof (option as { label?: unknown }).label === 'string' &&
+              (option as { label: string }).label.length > 0
+          )
+        : undefined,
       options: Array.isArray(value.options)
         ? value.options.filter(
             (option): option is { index: number; label: string } =>
