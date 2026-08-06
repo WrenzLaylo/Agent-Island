@@ -67,6 +67,27 @@ function DockRing({ status }: { status: string }) {
   )
 }
 
+/**
+ * Last path segment, for telling two sessions apart at a glance.
+ *
+ * The terminal label alone is only the terminal *type*, so two Windows
+ * Terminal sessions read identically. The folder is what actually differs
+ * between concurrent sessions, and approving the wrong one is not recoverable.
+ */
+function folderName(cwd: string | undefined): string {
+  if (!cwd) return ''
+  // Index arithmetic rather than a character class: a class holding both
+  // separators is easy to mis-escape into one that matches only `/`, which
+  // silently leaves Windows paths unsplit and prints the whole path.
+  const SEPARATORS = ['/', String.fromCharCode(92)]
+  let end = cwd.length
+  while (end > 0 && SEPARATORS.includes(cwd[end - 1])) end -= 1
+  const trimmed = cwd.slice(0, end)
+  let cut = -1
+  for (const separator of SEPARATORS) cut = Math.max(cut, trimmed.lastIndexOf(separator))
+  return cut >= 0 ? trimmed.slice(cut + 1) : trimmed
+}
+
 function ActivityGlyph({ waiting = false }: { waiting?: boolean }) {
   return (
     <span className={`activity-glyph ${waiting ? 'is-waiting' : ''}`} aria-hidden="true">
@@ -348,10 +369,15 @@ export function IslandShell(props: IslandShellProps) {
                 <span>
                   <strong>Approval required</strong>
                   <small>
-                    {approval.terminalLabel
-                      ? `${approvalAgent.label} in ${approval.terminalLabel}`
-                      : approvalAgent.label}
-                    {queueCount > 1 ? ` · 1 of ${queueCount}` : ''}
+                    {[
+                      approval.terminalLabel
+                        ? `${approvalAgent.label} in ${approval.terminalLabel}`
+                        : approvalAgent.label,
+                      folderName(approval.cwd),
+                      queueCount > 1 ? `1 of ${queueCount}` : ''
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')}
                   </small>
                 </span>
               </div>
