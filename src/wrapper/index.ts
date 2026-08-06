@@ -16,6 +16,7 @@
  * agent. Exit code and stdio are transparent: if the wrapper fails for any
  * reason it must still leave the user with a working agent.
  */
+import { spawnSync } from 'node:child_process'
 import { spawn as ptySpawn, type IPty } from 'node-pty'
 import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -482,8 +483,31 @@ async function main(): Promise<void> {
   }, DECISION_POLL_MS)
   decisionPoll.unref?.()
 
+  // Without a real console this is unusable, not merely degraded: keystrokes
+  // stay line-buffered so the agent's TUI receives nothing, and VT sequences
+  // are printed as literal text instead of being interpreted. Electron under
+  // ELECTRON_RUN_AS_NODE is a GUI-subsystem binary and never attaches to the
+  // console, which is exactly how this happens — so say so rather than handing
+  // the user a frozen screen full of escape codes.
   if (process.stdin.isTTY) {
     process.stdin.setRawMode(true)
+  } else {
+    const advice = process.versions.electron
+      ? 'island: run the wrapper with Node rather than Electron (install Node.js, or use the island launcher).'
+      : 'island: try running it directly in a terminal window rather than through a pipe.'
+    process.stderr.write(
+      [
+        `island: this terminal did not give the wrapper a console, so input would not reach ${agentId}.`,
+        advice,
+        `island: starting ${agentId} directly instead — Agent Island will not see this session.`,
+        '',
+        ''
+      ].join('\n')
+    )
+    clearInterval(heartbeat)
+    files.cleanup()
+    const direct = spawnSync(launch.command, launch.args, { stdio: 'inherit', cwd: launch.cwd })
+    process.exit(direct.status ?? 0)
   }
   process.stdin.resume()
   process.stdin.on('data', (chunk: Buffer) => {

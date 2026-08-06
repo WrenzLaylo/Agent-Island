@@ -61,8 +61,19 @@ export function ensureLauncherScripts(): string {
     [
       '@echo off',
       'setlocal',
+      `set "AI_WRAPPER=${wrapper}"`,
+      'set "AI_NODE="',
+      // Plain node is strongly preferred: Electron is a GUI-subsystem binary, so
+      // under ELECTRON_RUN_AS_NODE its stdio is never recognised as a console.
+      // stdin.isTTY is false, raw mode cannot be set, and VT sequences are
+      // printed literally instead of being interpreted — the agent is unusable.
+      "for /f \"delims=\" %%i in ('where node 2^>nul') do if not defined AI_NODE set \"AI_NODE=%%i\"",
+      'if defined AI_NODE goto :usenode',
       'set "ELECTRON_RUN_AS_NODE=1"',
-      `"${exe}" "${wrapper}" %*`,
+      `"${exe}" "%AI_WRAPPER%" %*`,
+      'goto :eof',
+      ':usenode',
+      '"%AI_NODE%" "%AI_WRAPPER%" %*',
       ''
     ].join('\r\n'),
     'utf8'
@@ -72,7 +83,11 @@ export function ensureLauncherScripts(): string {
     join(dir, 'island'),
     [
       '#!/bin/bash',
-      `ELECTRON_RUN_AS_NODE=1 "${toPosix(exe)}" "${toPosix(wrapper)}" "$@"`,
+      `wrapper="${toPosix(wrapper)}"`,
+      'if command -v node >/dev/null 2>&1; then',
+      '  exec node "$wrapper" "$@"',
+      'fi',
+      `ELECTRON_RUN_AS_NODE=1 exec "${toPosix(exe)}" "$wrapper" "$@"`,
       ''
     ].join('\n'),
     'utf8'
@@ -99,11 +114,10 @@ function powerShellBlock(): string {
     lines.push(
       `function ${agent} {`,
       `  $island = '${wrapper}'`,
-      `  $electron = '${exe}'`,
-      `  if ((Test-Path $island) -and (Test-Path $electron)) {`,
-      `    $env:ELECTRON_RUN_AS_NODE = '1'`,
-      `    & $electron $island ${agent} @args`,
-      `    Remove-Item Env:\\ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue`,
+      `  $node = (Get-Command node -CommandType Application -ErrorAction SilentlyContinue |`,
+      `    Select-Object -First 1).Source`,
+      `  if ((Test-Path $island) -and $node) {`,
+      `    & $node $island ${agent} @args`,
       `  } else {`,
       `    # Fail open: fall back to the real executable.`,
       `    $real = Get-Command ${agent} -CommandType Application -ErrorAction SilentlyContinue |`,
@@ -131,9 +145,8 @@ function bashBlock(): string {
     lines.push(
       `${agent}() {`,
       `  local island="${wrapper}"`,
-      `  local electron="${exe}"`,
-      `  if [ -f "$island" ] && [ -f "$electron" ]; then`,
-      `    ELECTRON_RUN_AS_NODE=1 "$electron" "$island" ${agent} "$@"`,
+      `  if [ -f "$island" ] && command -v node >/dev/null 2>&1; then`,
+      `    node "$island" ${agent} "$@"`,
       `  else`,
       `    # Fail open: run the real executable.`,
       `    command ${agent} "$@"`,
