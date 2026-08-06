@@ -1,15 +1,15 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { AgentId, ApprovalDecision, IslandSettings, IslandWindowLayout, TerminalInputPrompt } from '../shared/contracts'
 import type {
-  PtyDataEvent,
-  PtyExitEvent,
-  PtyResizeRequest,
-  PtySessionInfo,
-  PtyStartRequest,
-  PtyStartResult,
-  PtyStopRequest,
-  PtyWriteRequest
-} from '../shared/pty-types'
+  AgentSessionRecord,
+  SessionPromptRecord
+} from '../shared/session-registry'
+
+export interface ShimResult {
+  ok: boolean
+  installed: string[]
+  errors: string[]
+}
 
 export interface IslandApi {
   platform: NodeJS.Platform
@@ -19,25 +19,24 @@ export interface IslandApi {
   quit: () => Promise<void>
   onToggle: (handler: () => void) => () => void
   onSelectAgent: (handler: (agentId: AgentId) => void) => () => void
-  ptyStart: (request: PtyStartRequest) => Promise<PtyStartResult>
-  ptyWrite: (request: PtyWriteRequest) => Promise<{ ok: boolean; error?: string }>
-  ptyResize: (request: PtyResizeRequest) => Promise<{ ok: boolean; error?: string }>
-  ptyStop: (request: PtyStopRequest) => Promise<{ ok: boolean; error?: string }>
-  ptyList: () => Promise<PtySessionInfo[]>
-  ptyReplay: (agentId: AgentId) => Promise<string>
-  onPtyData: (handler: (event: PtyDataEvent) => void) => () => void
-  onPtyExit: (handler: (event: PtyExitEvent) => void) => () => void
-  onPtySession: (handler: (session: PtySessionInfo) => void) => () => void
-  ptyAnswerApproval: (request: {
-    agentId: AgentId
-    requestId: string
+  listSessions: () => Promise<AgentSessionRecord[]>
+  listSessionPrompts: () => Promise<SessionPromptRecord[]>
+  answerSessionPrompt: (request: {
+    sessionId: string
+    promptId: string
     decision: ApprovalDecision
   }) => Promise<{ ok: boolean; error?: string }>
+  onSessionPrompt: (
+    handler: (payload: { prompt: SessionPromptRecord; session: AgentSessionRecord }) => void
+  ) => () => void
+  onSessionPromptCleared: (handler: (prompt: SessionPromptRecord) => void) => () => void
+  onSessionAdded: (handler: (session: AgentSessionRecord) => void) => () => void
+  onSessionRemoved: (handler: (session: AgentSessionRecord) => void) => () => void
+  installShims: () => Promise<ShimResult>
+  uninstallShims: () => Promise<ShimResult>
+  shimStatus: () => Promise<{ wrapper: string; electron: string; wrapperExists: boolean }>
   onApproval: (handler: (request: unknown) => void) => () => void
   onApprovalCleared: (handler: (request: unknown) => void) => () => void
-  onApprovalAnswered: (
-    handler: (payload: { agentId: AgentId; requestId: string; decision: ApprovalDecision }) => void
-  ) => () => void
   listBridgeApprovals: () => Promise<unknown>
   answerBridgeApproval: (request: {
     requestId: string
@@ -55,10 +54,9 @@ export interface IslandApi {
   onOpenSettings: (handler: () => void) => () => void
   onReturnHome: (handler: () => void) => () => void
   onOutsideClick: (handler: () => void) => () => void
-  openTerminal: (request: { agentId: AgentId; promptId?: string }) => Promise<{ ok: boolean; error?: string }>
+  openTerminal: (request: { agentId: AgentId; sessionId?: string }) => Promise<{ ok: boolean; error?: string }>
   onTerminalInput: (handler: (request: TerminalInputPrompt) => void) => () => void
   onTerminalInputCleared: (handler: (request: TerminalInputPrompt) => void) => () => void
-  onTerminalFocus: (handler: () => void) => () => void
 }
 
 const api: IslandApi = {
@@ -77,28 +75,35 @@ const api: IslandApi = {
     ipcRenderer.on('island:select-agent', listener)
     return () => ipcRenderer.removeListener('island:select-agent', listener)
   },
-  ptyStart: (request) => ipcRenderer.invoke('pty:start', request),
-  ptyWrite: (request) => ipcRenderer.invoke('pty:write', request),
-  ptyResize: (request) => ipcRenderer.invoke('pty:resize', request),
-  ptyStop: (request) => ipcRenderer.invoke('pty:stop', request),
-  ptyList: () => ipcRenderer.invoke('pty:list'),
-  ptyReplay: (agentId) => ipcRenderer.invoke('pty:replay', agentId),
-  onPtyData: (handler) => {
-    const listener = (_event: Electron.IpcRendererEvent, payload: PtyDataEvent) => handler(payload)
-    ipcRenderer.on('pty:data', listener)
-    return () => ipcRenderer.removeListener('pty:data', listener)
+  listSessions: () => ipcRenderer.invoke('island:list-sessions'),
+  listSessionPrompts: () => ipcRenderer.invoke('island:list-session-prompts'),
+  answerSessionPrompt: (request) => ipcRenderer.invoke('island:answer-session-prompt', request),
+  onSessionPrompt: (handler) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      payload: { prompt: SessionPromptRecord; session: AgentSessionRecord }
+    ) => handler(payload)
+    ipcRenderer.on('island:session-prompt', listener)
+    return () => ipcRenderer.removeListener('island:session-prompt', listener)
   },
-  onPtyExit: (handler) => {
-    const listener = (_event: Electron.IpcRendererEvent, payload: PtyExitEvent) => handler(payload)
-    ipcRenderer.on('pty:exit', listener)
-    return () => ipcRenderer.removeListener('pty:exit', listener)
+  onSessionPromptCleared: (handler) => {
+    const listener = (_event: Electron.IpcRendererEvent, payload: SessionPromptRecord) => handler(payload)
+    ipcRenderer.on('island:session-prompt-cleared', listener)
+    return () => ipcRenderer.removeListener('island:session-prompt-cleared', listener)
   },
-  onPtySession: (handler) => {
-    const listener = (_event: Electron.IpcRendererEvent, payload: PtySessionInfo) => handler(payload)
-    ipcRenderer.on('pty:session', listener)
-    return () => ipcRenderer.removeListener('pty:session', listener)
+  onSessionAdded: (handler) => {
+    const listener = (_event: Electron.IpcRendererEvent, payload: AgentSessionRecord) => handler(payload)
+    ipcRenderer.on('island:session-added', listener)
+    return () => ipcRenderer.removeListener('island:session-added', listener)
   },
-  ptyAnswerApproval: (request) => ipcRenderer.invoke('pty:answer-approval', request),
+  onSessionRemoved: (handler) => {
+    const listener = (_event: Electron.IpcRendererEvent, payload: AgentSessionRecord) => handler(payload)
+    ipcRenderer.on('island:session-removed', listener)
+    return () => ipcRenderer.removeListener('island:session-removed', listener)
+  },
+  installShims: () => ipcRenderer.invoke('island:install-shims'),
+  uninstallShims: () => ipcRenderer.invoke('island:uninstall-shims'),
+  shimStatus: () => ipcRenderer.invoke('island:shim-status'),
   onApproval: (handler) => {
     const listener = (_event: Electron.IpcRendererEvent, payload: unknown) => handler(payload)
     ipcRenderer.on('island:approval', listener)
@@ -108,14 +113,6 @@ const api: IslandApi = {
     const listener = (_event: Electron.IpcRendererEvent, payload: unknown) => handler(payload)
     ipcRenderer.on('island:approval-cleared', listener)
     return () => ipcRenderer.removeListener('island:approval-cleared', listener)
-  },
-  onApprovalAnswered: (handler) => {
-    const listener = (
-      _event: Electron.IpcRendererEvent,
-      payload: { agentId: AgentId; requestId: string; decision: ApprovalDecision }
-    ) => handler(payload)
-    ipcRenderer.on('island:approval-answered', listener)
-    return () => ipcRenderer.removeListener('island:approval-answered', listener)
   },
   listBridgeApprovals: () => ipcRenderer.invoke('bridge:list-approvals'),
   answerBridgeApproval: (request) => ipcRenderer.invoke('bridge:answer-approval', request),
@@ -158,11 +155,6 @@ const api: IslandApi = {
     ipcRenderer.on('island:terminal-input-cleared', listener)
     return () => ipcRenderer.removeListener('island:terminal-input-cleared', listener)
   },
-  onTerminalFocus: (handler) => {
-    const listener = () => handler()
-    ipcRenderer.on('terminal:focus', listener)
-    return () => ipcRenderer.removeListener('terminal:focus', listener)
-  }
 }
 
 contextBridge.exposeInMainWorld('agentIsland', api)

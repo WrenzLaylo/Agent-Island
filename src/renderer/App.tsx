@@ -19,7 +19,7 @@ import {
   type IslandEvent
 } from '@shared/island-machine'
 import { canApproveRequest } from '@shared/approval-guard'
-import type { PtyExitEvent, PtySessionInfo } from '@shared/pty-types'
+import type { AgentSessionRecord, SessionPromptRecord } from '@shared/session-registry'
 import { IslandShell, type IslandPanel } from './components/IslandShell'
 
 function isVisibleActivity(status: IslandSnapshot['agents'][AgentId]['status']): boolean {
@@ -97,6 +97,59 @@ function playApprovalCue(): void {
   }
 }
 
+
+/**
+ * A session prompt is the registry's wire format; the island's state machine
+ * speaks ApprovalRequest / TerminalInputPrompt. `id` is the prompt id so the
+ * decision written back to the wrapper matches what it is waiting on.
+ */
+function sessionPromptToApproval(
+  prompt: SessionPromptRecord,
+  session: AgentSessionRecord
+): ApprovalRequest {
+  return {
+    id: prompt.promptId,
+    agentId: prompt.agentId,
+    summary: prompt.title,
+    detail: prompt.detail,
+    cwd: prompt.cwd || session.cwd,
+    risk: prompt.risk ?? 'unknown',
+    riskReason: prompt.riskReason,
+    createdAt: prompt.createdAt,
+    expiresAt: prompt.expiresAt,
+    processAlive: true,
+    waitingForInput: true,
+    answered: false,
+    superseded: false,
+    source: prompt.agentId === 'hermes' ? 'hermes-terminal' : 'codex-terminal',
+    fingerprint: prompt.fingerprint,
+    choices: prompt.choices,
+    sessionId: session.id
+  }
+}
+
+function sessionPromptToHandoff(
+  prompt: SessionPromptRecord,
+  session: AgentSessionRecord
+): TerminalInputPrompt {
+  return {
+    id: prompt.promptId,
+    agentId: prompt.agentId,
+    kind: 'unsupported',
+    title: prompt.title,
+    detail: prompt.detail,
+    cwd: prompt.cwd || session.cwd,
+    createdAt: prompt.createdAt,
+    expiresAt: prompt.expiresAt,
+    processAlive: true,
+    waitingForInput: true,
+    fingerprint: prompt.fingerprint,
+    sessionId: session.id,
+    terminalLabel: session.terminalLabel,
+    canRaiseWindow: session.hwnd != null
+  }
+}
+
 export function App() {
   const [state, setState] = useState<IslandSnapshot>(() => createInitialIslandState())
   const [settings, setSettings] = useState<IslandSettings>(DEFAULT_ISLAND_SETTINGS)
@@ -120,6 +173,7 @@ export function App() {
   const resizeRunRef = useRef(0)
   const soundedApprovals = useRef(new Set<string>())
   const completionTimers = useRef<Partial<Record<AgentId, number>>>({})
+  const sessionsRef = useRef<AgentSessionRecord[]>([])
 
   useEffect(() => {
     stateRef.current = state
@@ -335,44 +389,93 @@ export function App() {
       }
     })
 
-    const offPtySession = api.onPtySession((session: PtySessionInfo) => {
-      if (session.alive && stateRef.current.approvalQueue.length === 0) {
-        dispatch({ type: 'SELECT_AGENT', agentId: session.agentId, open: false })
+    // Sessions come from `island <agent>` wrappers running in real terminals.
+    // Agent Island owns no processes, so "running" here means "a wrapper for
+    // this agent is alive", nothing more.
+    const applySessions = (sessions: AgentSessionRecord[]) => {
+      sessionsRef.current = sessions
+      for (const id of AGENT_ORDER) {
+        const live = sessions.filter((s) => s.agentId === id)
+        const agent = stateRef.current.agents[id]
+        if (!agent.available) continue
+        if (agent.pendingApprovalIds.length > 0) continue
+        dispatch({
+          type: 'SET_AGENT_STATUS',
+          agentId: id,
+          status: live.length ? 'running' : 'idle',
+          activityLabel: live.length
+            ? live.length > 1
+              ? `${live.length} sessions in terminals`
+              : `Running in ${live[0].terminalLabel}`
+            : 'No session running',
+          available: true
+        })
       }
-      dispatch({
-        type: 'SET_AGENT_STATUS',
-        agentId: session.agentId,
-        status: session.alive ? 'running' : 'idle',
-        activityLabel: session.alive ? 'Session running' : 'Ready',
-        available: true
+    }
+
+    const refreshSessions = () => {
+      void api.listSessions().then((list) => {
+        if (!disposed && Array.isArray(list)) applySessions(list)
       })
+    }
+
+    const offSessionAdded = api.onSessionAdded(() => refreshSessions())
+    const offSessionRemoved = api.onSessionRemoved((session) => {
+      // If the terminal hosting the current handoff disappeared, stop offering
+      // to switch to it.
+      setTerminalInput((current) => (current && current.id.startsWith(session.id) ? null : current))
+      setPanel((current) => (current === 'handoff' ? null : current))
+      refreshSessions()
     })
 
-    const offPtyExit = api.onPtyExit((event: PtyExitEvent) => {
-      const previousTimer = completionTimers.current[event.agentId]
-      if (previousTimer) window.clearTimeout(previousTimer)
-
+    const offSessionPrompt = api.onSessionPrompt(({ prompt, session }) => {
+      if (prompt.kind === 'approval') {
+        enqueueApproval(sessionPromptToApproval(prompt, session))
+        return
+      }
+      setTerminalInput(sessionPromptToHandoff(prompt, session))
+      setAttentionNonce((value) => value + 1)
+      setPanel('handoff')
+      dispatch({ type: 'SELECT_AGENT', agentId: prompt.agentId, open: false })
       dispatch({
         type: 'SET_AGENT_STATUS',
-        agentId: event.agentId,
-        status: event.exitCode === 0 ? 'completed' : 'error',
-        activityLabel: event.exitCode === 0 ? 'Session completed' : `Session exited with code ${event.exitCode}`,
-        lastError: event.exitCode === 0 ? undefined : `Exit code ${event.exitCode}`
+        agentId: prompt.agentId,
+        status: 'waiting',
+        activityLabel: `Needs input in ${session.terminalLabel}`,
+        available: true
       })
+      dispatch({ type: 'EXPAND' })
+      if (settingsRef.current.approvalSounds) playApprovalCue()
+    })
 
-      if (event.exitCode === 0) {
-        completionTimers.current[event.agentId] = window.setTimeout(() => {
-          const agent = stateRef.current.agents[event.agentId]
-          if (agent.status !== 'completed' || agent.pendingApprovalIds.length > 0) return
-          dispatch({
-            type: 'SET_AGENT_STATUS',
-            agentId: event.agentId,
-            status: 'idle',
-            activityLabel: 'Ready',
-            available: true
-          })
-          delete completionTimers.current[event.agentId]
-        }, 2200)
+    const offSessionPromptCleared = api.onSessionPromptCleared((prompt) => {
+      if (prompt.kind === 'approval') {
+        dispatch({
+          type: 'INVALIDATE_APPROVAL',
+          requestId: prompt.promptId,
+          message: 'The agent moved on before this was answered.',
+          kind: 'cancelled'
+        })
+        return
+      }
+      setTerminalInput((current) => (current?.id === prompt.promptId ? null : current))
+      setPanel((current) => (current === 'handoff' ? null : current))
+      refreshSessions()
+    })
+
+    refreshSessions()
+    void api.listSessionPrompts().then((list) => {
+      if (disposed || !Array.isArray(list)) return
+      for (const prompt of list) {
+        const session = sessionsRef.current.find((item: AgentSessionRecord) => item.id === prompt.sessionId)
+        if (!session) continue
+        if (prompt.kind === 'approval') {
+          enqueueApproval(sessionPromptToApproval(prompt, session), false)
+        } else {
+          setTerminalInput(sessionPromptToHandoff(prompt, session))
+          setPanel('handoff')
+          dispatch({ type: 'EXPAND' })
+        }
       }
     })
 
@@ -394,8 +497,10 @@ export function App() {
       offOutsideClick()
       offTerminalInput()
       offTerminalInputCleared()
-      offPtySession()
-      offPtyExit()
+      offSessionAdded()
+      offSessionRemoved()
+      offSessionPrompt()
+      offSessionPromptCleared()
       for (const timer of Object.values(completionTimers.current)) {
         if (timer) window.clearTimeout(timer)
       }
@@ -464,10 +569,10 @@ export function App() {
         dispatch({ type: 'SET_ERROR', message: result.error ?? 'The decision could not be written.' })
         return
       }
-    } else if ((approval.source === 'hermes-terminal' || approval.source === 'codex-terminal') && api?.ptyAnswerApproval) {
-      const result = await api.ptyAnswerApproval({
-        agentId: approval.agentId,
-        requestId: approval.id,
+    } else if (approval.sessionId) {
+      const result = await api.answerSessionPrompt({
+        sessionId: approval.sessionId,
+        promptId: approval.id,
         decision
       })
       if (!result.ok) {
@@ -497,6 +602,12 @@ export function App() {
     updateAppSettings({ onboardingComplete: true })
     setPanel(null)
     dispatch({ type: 'COLLAPSE' })
+    // Shell integration is on by default for new installs: without it the
+    // island cannot see a session at all. The shims fail open, and Settings has
+    // a one-click Remove.
+    void window.agentIsland.installShims().then((result) => {
+      if (result.ok) updateAppSettings({ shellShimsInstalled: true })
+    })
   }
 
   const onMouseEnter = () => {
@@ -633,13 +744,15 @@ export function App() {
     dispatch({ type: 'CLICK_PILL' })
   }
 
-  const openTerminal = async (agentId: AgentId, promptId?: string) => {
-    const result = await window.agentIsland.openTerminal({ agentId, promptId })
+  const openTerminal = async (agentId: AgentId, sessionId?: string) => {
+    const result = await window.agentIsland.openTerminal({ agentId, sessionId })
     if (!result.ok) {
       dispatch({ type: 'SET_ERROR', message: result.error ?? 'The terminal could not be opened.' })
       return
     }
-    if (terminalInput?.agentId === agentId && (!promptId || terminalInput.id === promptId)) {
+    // The prompt is still live in the terminal — the user is going there to
+    // answer it. Clearing it here just stops the island nagging about it.
+    if (terminalInput?.agentId === agentId && (!sessionId || terminalInput.sessionId === sessionId)) {
       setTerminalInput(null)
     }
     setPanel(null)

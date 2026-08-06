@@ -1306,3 +1306,10 @@ select:focus-visible,
     transition-duration: 1ms !important;
   }
 }
+
+.handoff-note {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+}

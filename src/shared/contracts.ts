@@ -54,6 +54,12 @@ export interface TerminalInputPrompt {
   processAlive: boolean
   waitingForInput: boolean
   fingerprint: string
+  /** Registry session that raised this. */
+  sessionId?: string
+  /** Human label for the hosting terminal, e.g. "Windows Terminal". */
+  terminalLabel?: string
+  /** False when the host exposes no raisable window (VS Code panels). */
+  canRaiseWindow?: boolean
 }
 
 export type TransientKind =
@@ -89,6 +95,8 @@ export interface ApprovalRequest {
   fingerprint?: string
   /** Decisions the source agent actually exposes for this request. */
   choices?: ApprovalDecision[]
+  /** Registry session that raised this, when it came from an `island` wrapper. */
+  sessionId?: string
 }
 
 export interface AgentSnapshot {
@@ -130,6 +138,10 @@ export interface IslandSettings {
   quietIdle: boolean
   developerDiagnostics: boolean
   onboardingComplete: boolean
+  /** Move the agent's terminal to the island's display on handoff. */
+  moveTerminalToIsland: boolean
+  /** Shell shims that route `claude`/`codex`/`hermes` through the wrapper. */
+  shellShimsInstalled: boolean
 }
 
 export const DEFAULT_ISLAND_SETTINGS: IslandSettings = {
@@ -145,7 +157,9 @@ export const DEFAULT_ISLAND_SETTINGS: IslandSettings = {
   glassIntensity: 0.74,
   quietIdle: true,
   developerDiagnostics: false,
-  onboardingComplete: false
+  onboardingComplete: false,
+  moveTerminalToIsland: true,
+  shellShimsInstalled: false
 }
 
 export const AGENT_ORDER: AgentId[] = ['claude', 'codex', 'hermes']

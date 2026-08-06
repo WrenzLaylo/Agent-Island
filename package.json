@@ -1,6 +1,6 @@
 {
   "name": "agent-island",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "private": true,
   "description": "Dynamic Island-style overlay for Claude, Codex, and Hermes agent sessions",
   "main": "./out/main/index.js",
@@ -12,12 +12,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
-    "start": "electron-vite preview",
-    "smoke:pty": "electron scripts/smoke-pty-electron.cjs"
+    "start": "electron-vite preview"
   },
   "dependencies": {
-    "@xterm/addon-fit": "^0.11.0",
-    "@xterm/xterm": "^6.0.0",
     "framer-motion": "^12.23.12",
     "node-pty": "^1.1.0",
     "react": "^19.1.1",

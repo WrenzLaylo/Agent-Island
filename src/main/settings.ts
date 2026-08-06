@@ -89,7 +89,15 @@ function sanitiseSettings(value: Partial<IslandSettings> | undefined): IslandSet
     onboardingComplete:
       typeof raw.onboardingComplete === 'boolean'
         ? raw.onboardingComplete
-        : DEFAULT_ISLAND_SETTINGS.onboardingComplete
+        : DEFAULT_ISLAND_SETTINGS.onboardingComplete,
+    moveTerminalToIsland:
+      typeof raw.moveTerminalToIsland === 'boolean'
+        ? raw.moveTerminalToIsland
+        : DEFAULT_ISLAND_SETTINGS.moveTerminalToIsland,
+    shellShimsInstalled:
+      typeof raw.shellShimsInstalled === 'boolean'
+        ? raw.shellShimsInstalled
+        : DEFAULT_ISLAND_SETTINGS.shellShimsInstalled
   }
 }
 

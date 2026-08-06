@@ -12,8 +12,10 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { discoverAgents } from './agents/discover'
 import type { AgentDiscoveryResult, DiscoveredAgent } from './agents/discover'
-import { PtyManager, shellHomeCwd } from './agents/process-manager'
+import { SessionWatcher } from './agents/session-watcher'
 import { ApprovalBridgeWatcher, writeDecision } from './agents/approval-bridge'
+import { installShellShims, removeShellShims, shimStatus } from './agents/shell-shims'
+import { getWindowRect, raiseWindow } from '../node/win32-windows'
 import {
   flushPersistedStore,
   getDisplayLayout,
@@ -30,21 +32,12 @@ import type {
   IslandWindowLayout,
   TerminalInputPrompt
 } from '../shared/contracts'
-import {
-  isAgentId,
-  MAX_PTY_WRITE_CHARS,
-  type PtyResizeRequest,
-  type PtyStartRequest,
-  type PtyStopRequest,
-  type PtyWriteRequest,
-  validateSize
-} from '../shared/pty-types'
+import { isAgentId } from '../shared/pty-types'
 
 let mainWindow: BrowserWindow | null = null
-const terminalWindows = new Map<AgentId, BrowserWindow>()
 let tray: Tray | null = null
 let discoveryCache: AgentDiscoveryResult | null = null
-const ptyManager = new PtyManager({ defaultCwd: shellHomeCwd(), forceKillMs: 1500 })
+const sessionWatcher = new SessionWatcher()
 const bridgeWatcher = new ApprovalBridgeWatcher()
 
 const isDev = !app.isPackaged
@@ -538,106 +531,64 @@ function islandDisplay() {
   return screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
 }
 
-function centreTerminalOnIslandDisplay(win: BrowserWindow): void {
-  const display = islandDisplay()
-  const area = display.workArea
-  const current = win.getBounds()
-  const width = clamp(current.width || 980, 640, Math.max(640, Math.floor(area.width * 0.94)))
-  const height = clamp(current.height || 680, 420, Math.max(420, Math.floor(area.height * 0.90)))
-  const currentDisplay = screen.getDisplayMatching(current)
+/**
+ * Bring the terminal that is actually hosting this agent session to the front.
+ *
+ * This raises a window Agent Island does not own and never created: the HWND
+ * was published by the `island` wrapper running inside the user's real
+ * terminal. Nothing is launched here — if the window is gone, the session is
+ * gone, and the caller is told so.
+ */
+async function handoffToTerminal(
+  agentId: AgentId,
+  sessionId?: string
+): Promise<{ ok: boolean; error?: string }> {
+  const session = sessionId
+    ? sessionWatcher.getSession(sessionId)
+    : sessionWatcher.newestSessionFor(agentId)
 
-  // Preserve the user's position when it is already on the same display.
-  if (currentDisplay.id === display.id) {
-    const x = clamp(current.x, area.x, Math.max(area.x, area.x + area.width - width))
-    const y = clamp(current.y, area.y, Math.max(area.y, area.y + area.height - height))
-    win.setBounds({ x, y, width, height }, false)
-    return
+  if (!session) {
+    return {
+      ok: false,
+      error: `No live ${agentId} session. Start one with "island ${agentId}" in a terminal.`
+    }
+  }
+  if (session.hwnd == null) {
+    return {
+      ok: false,
+      error: `${session.terminalLabel} does not expose a window that can be raised. Switch to it manually.`
+    }
   }
 
-  win.setBounds({
-    x: Math.round(area.x + (area.width - width) / 2),
-    y: Math.round(area.y + (area.height - height) / 2),
-    width,
-    height
-  }, false)
-}
+  const area = islandDisplay().workArea
+  // Only relocate when the terminal is on a different display, and only when
+  // the user has not opted out of having their layout rearranged.
+  const shouldMove =
+    getSettings().moveTerminalToIsland && !(await windowIsOnDisplay(session.hwnd, area))
 
-function createTerminalWindow(agentId: AgentId): BrowserWindow {
-  const existing = terminalWindows.get(agentId)
-  if (existing && !existing.isDestroyed()) return existing
-
-  const display = islandDisplay()
-  const area = display.workArea
-  const width = Math.min(980, Math.max(640, Math.floor(area.width * 0.82)))
-  const height = Math.min(700, Math.max(420, Math.floor(area.height * 0.78)))
-  const preloadPath = join(__dirname, '../preload/index.js')
-  const label = agentId === 'claude' ? 'Claude' : agentId === 'codex' ? 'Codex' : 'Hermes'
-  const win = new BrowserWindow({
-    x: Math.round(area.x + (area.width - width) / 2),
-    y: Math.round(area.y + (area.height - height) / 2),
-    width,
-    height,
-    minWidth: 640,
-    minHeight: 420,
-    show: false,
-    backgroundColor: '#000000',
-    title: `${label} Terminal — Agent Island`,
-    autoHideMenuBar: true,
-    webPreferences: {
-      preload: preloadPath,
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: false,
-      backgroundThrottling: false
-    }
+  const outcome = await raiseWindow({
+    hwnd: session.hwnd,
+    moveTo: shouldMove ? area : undefined
   })
 
-  win.setMenuBarVisibility(false)
-  terminalWindows.set(agentId, win)
-
-  const query = { agent: agentId }
-  if (isDev && process.env.ELECTRON_RENDERER_URL) {
-    const base = process.env.ELECTRON_RENDERER_URL.replace(/\/$/, '')
-    void win.loadURL(`${base}/terminal.html?agent=${encodeURIComponent(agentId)}`)
-  } else {
-    void win.loadFile(join(__dirname, '../renderer/terminal.html'), { query })
+  if (outcome === 'gone') {
+    return { ok: false, error: 'That terminal has been closed.' }
   }
-
-  win.once('ready-to-show', () => {
-    centreTerminalOnIslandDisplay(win)
-    win.show()
-    win.focus()
-  })
-  win.on('closed', () => terminalWindows.delete(agentId))
-  return win
+  if (outcome === 'error') {
+    return { ok: false, error: 'The terminal window could not be raised.' }
+  }
+  return { ok: true }
 }
 
-async function handoffToTerminal(agentId: AgentId, promptId?: string): Promise<{ ok: boolean; error?: string }> {
-  const agent = agentFromDiscovery(agentId)
-  if (!agent?.available) return { ok: false, error: `${agentId} is not available` }
-
-  try {
-    let win = createTerminalWindow(agentId)
-    if (win.isDestroyed()) win = createTerminalWindow(agentId)
-    if (win.isMinimized()) win.restore()
-    const targetDisplay = islandDisplay()
-    const currentDisplay = screen.getDisplayMatching(win.getBounds())
-    const moveAcrossDisplays = currentDisplay.id !== targetDisplay.id
-    const wasMaximized = win.isMaximized()
-    if (wasMaximized && moveAcrossDisplays) win.unmaximize()
-    if (!win.isMaximized()) centreTerminalOnIslandDisplay(win)
-    if (wasMaximized && moveAcrossDisplays) win.maximize()
-    if (!win.webContents.isLoading()) {
-      win.show()
-      win.moveTop()
-      win.focus()
-      win.webContents.send('terminal:focus')
-    }
-    ptyManager.dismissTerminalInput(agentId, promptId)
-    return { ok: true }
-  } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : String(error) }
-  }
+async function windowIsOnDisplay(
+  hwnd: number,
+  area: { x: number; y: number; width: number; height: number }
+): Promise<boolean> {
+  const rect = await getWindowRect(hwnd)
+  if (!rect) return false
+  const cx = rect.x + rect.width / 2
+  const cy = rect.y + rect.height / 2
+  return cx >= area.x && cx <= area.x + area.width && cy >= area.y && cy <= area.y + area.height
 }
 
 function createWindow(): void {
@@ -738,15 +689,41 @@ function registerIpc(): void {
   ipcMain.handle('island:update-settings', (_event: unknown, patch: Partial<IslandSettings>) => updateAppSettings(patch ?? {}))
   ipcMain.handle(
     'terminal:handoff',
-    (_event: unknown, request: { agentId?: unknown; promptId?: unknown }) => {
+    (_event: unknown, request: { agentId?: unknown; sessionId?: unknown }) => {
       if (!request || !isAgentId(request.agentId)) return { ok: false, error: 'Invalid agentId' }
-      if (request.promptId != null && typeof request.promptId !== 'string') {
-        return { ok: false, error: 'Invalid promptId' }
+      if (request.sessionId != null && typeof request.sessionId !== 'string') {
+        return { ok: false, error: 'Invalid sessionId' }
       }
-      const promptId = typeof request.promptId === 'string' ? request.promptId : undefined
-      return handoffToTerminal(request.agentId, promptId)
+      const sessionId = typeof request.sessionId === 'string' ? request.sessionId : undefined
+      return handoffToTerminal(request.agentId, sessionId)
     }
   )
+
+  ipcMain.handle('island:list-sessions', () => sessionWatcher.listSessions())
+  ipcMain.handle('island:list-session-prompts', () => sessionWatcher.listPrompts())
+  ipcMain.handle(
+    'island:answer-session-prompt',
+    (_event: unknown, request: { sessionId?: unknown; promptId?: unknown; decision?: unknown }) => {
+      if (
+        !request ||
+        typeof request.sessionId !== 'string' ||
+        typeof request.promptId !== 'string' ||
+        !isApprovalDecision(request.decision)
+      ) {
+        return { ok: false, error: 'Invalid decision' }
+      }
+      const ok = sessionWatcher.writeDecision({
+        sessionId: request.sessionId,
+        promptId: request.promptId,
+        choice: request.decision,
+        decidedAt: Date.now()
+      })
+      return ok ? { ok: true } : { ok: false, error: 'The decision could not be written.' }
+    }
+  )
+  ipcMain.handle('island:install-shims', () => installShellShims())
+  ipcMain.handle('island:uninstall-shims', () => removeShellShims())
+  ipcMain.handle('island:shim-status', () => shimStatus())
 
   ipcMain.handle('island:discover-agents', async () => {
     discoveryCache = await discoverAgents()
@@ -754,53 +731,11 @@ function registerIpc(): void {
   })
   ipcMain.handle('island:get-discovery', () => discoveryCache)
 
-  ipcMain.handle('island:quit', async () => {
+  ipcMain.handle('island:quit', () => {
     bridgeWatcher.stop()
-    await ptyManager.stopAll()
+    sessionWatcher.stop()
     app.quit()
   })
-
-  ipcMain.handle('pty:start', (_event: unknown, request: PtyStartRequest) => {
-    if (!request || !isAgentId(request.agentId)) return { ok: false, error: 'Invalid agentId' }
-    const sizeError = validateSize(request.cols, request.rows)
-    if (sizeError) return { ok: false, error: sizeError }
-    const agent = agentFromDiscovery(request.agentId)
-    return ptyManager.start(request.agentId, agent, request.cols, request.rows, request.cwd)
-  })
-  ipcMain.handle('pty:write', (_event: unknown, request: PtyWriteRequest) => {
-    if (!request || !isAgentId(request.agentId) || typeof request.data !== 'string') {
-      return { ok: false, error: 'Invalid write request' }
-    }
-    if (request.data.length > MAX_PTY_WRITE_CHARS) return { ok: false, error: 'Write payload too large' }
-    return ptyManager.write(request.agentId, request.data)
-  })
-  ipcMain.handle('pty:resize', (_event: unknown, request: PtyResizeRequest) => {
-    if (!request || !isAgentId(request.agentId)) return { ok: false, error: 'Invalid resize request' }
-    return ptyManager.resize(request.agentId, request.cols, request.rows)
-  })
-  ipcMain.handle('pty:stop', async (_event: unknown, request: PtyStopRequest) => {
-    if (!request || !isAgentId(request.agentId)) return { ok: false, error: 'Invalid stop request' }
-    return ptyManager.stop(request.agentId, Boolean(request.force))
-  })
-  ipcMain.handle('pty:list', () => ptyManager.list())
-  ipcMain.handle('pty:replay', (_event: unknown, agentId: unknown) => {
-    if (!isAgentId(agentId)) return ''
-    return ptyManager.getReplay(agentId)
-  })
-  ipcMain.handle(
-    'pty:answer-approval',
-    (_event: unknown, request: { agentId?: unknown; requestId?: unknown; decision?: unknown }) => {
-      if (
-        !request ||
-        !isAgentId(request.agentId) ||
-        typeof request.requestId !== 'string' ||
-        !isApprovalDecision(request.decision)
-      ) {
-        return { ok: false, error: 'Invalid approval decision' }
-      }
-      return ptyManager.answerApproval(request.agentId, request.requestId, request.decision)
-    }
-  )
 
   ipcMain.handle('bridge:list-approvals', () => bridgeWatcher.list())
   ipcMain.handle(
@@ -835,37 +770,27 @@ function wireBridgeEvents(): void {
   })
 }
 
-function wirePtyEvents(): void {
-  ptyManager.on('data', (payload) => sendToRenderer('pty:data', payload))
-  ptyManager.on('exit', (payload) => sendToRenderer('pty:exit', payload))
-  ptyManager.on('session', (payload) => sendToRenderer('pty:session', payload))
-  ptyManager.on('approval', (request) => {
-    showIsland({ focus: getSettings().autoExpandApprovals })
-    mainWindow?.webContents.send('island:approval', request)
+function wireSessionEvents(): void {
+  sessionWatcher.on('prompt-raised', (prompt, session) => {
+    const focus = prompt.kind === 'handoff' || getSettings().autoExpandApprovals
+    showIsland({ focus })
+    mainWindow?.webContents.send('island:session-prompt', { prompt, session })
   })
-  ptyManager.on('approval-cleared', (request) => {
-    mainWindow?.webContents.send('island:approval-cleared', request)
+  sessionWatcher.on('prompt-cleared', (prompt) => {
+    mainWindow?.webContents.send('island:session-prompt-cleared', prompt)
   })
-  ptyManager.on('approval-answered', (payload) => {
-    sendToRenderer('island:approval-answered', payload)
+  sessionWatcher.on('session-added', (session) => {
+    mainWindow?.webContents.send('island:session-added', session)
   })
-  ptyManager.on('terminal-input', (request: TerminalInputPrompt) => {
-    // The renderer always opens the handoff panel for these, so it is always
-    // a foreground interaction.
-    showIsland({ focus: true })
-    mainWindow?.webContents.send('island:terminal-input', request)
-  })
-  ptyManager.on('terminal-input-cleared', (request: TerminalInputPrompt) => {
-    mainWindow?.webContents.send('island:terminal-input-cleared', request)
+  sessionWatcher.on('session-removed', (session) => {
+    mainWindow?.webContents.send('island:session-removed', session)
   })
 }
 
-
 /**
  * Two copies of Agent Island share one userData directory, one settings file,
- * one approval-bridge folder and one set of global shortcuts. Both would watch
- * the same pending approvals and either could write the decision, so a second
- * launch surfaces the existing island instead of starting a rival one.
+ * one session registry and one set of global shortcuts, so a second launch
+ * surfaces the existing island instead of starting a rival one.
  */
 const hasInstanceLock = app.requestSingleInstanceLock()
 
@@ -881,7 +806,8 @@ async function bootstrap(): Promise<void> {
   loadPersistedStore()
   registerIpc()
   wireBridgeEvents()
-  wirePtyEvents()
+  wireSessionEvents()
+  sessionWatcher.start()
   void bridgeWatcher.start()
   discoveryCache = await discoverAgents()
   createWindow()
@@ -933,8 +859,9 @@ app.on('before-quit', (event: { preventDefault(): void }) => {
   tray?.destroy()
   tray = null
   bridgeWatcher.stop()
+  sessionWatcher.stop()
   flushPersistedStore()
-  void ptyManager.stopAll().finally(() => app.exit(0))
+  app.exit(0)
 })
 
 app.on('window-all-closed', () => {

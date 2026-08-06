@@ -38,7 +38,7 @@ interface IslandShellProps {
   onClickPill: () => void
   onCollapse: () => void
   onDecision: (decision: ApprovalDecision) => void
-  onContinueInTerminal: (agentId: AgentId, promptId?: string) => void
+  onContinueInTerminal: (agentId: AgentId, sessionId?: string) => void
   onOpenTerminal: (agentId: AgentId) => void
   onDismiss: () => void
   onOpenSettings: () => void
@@ -279,24 +279,40 @@ export function IslandShell(props: IslandShellProps) {
             <div className="panel-header handoff-header" data-drag-region="true">
               <div className="header-agent">
                 <span className="header-mark-wrap"><AgentMark agentId={terminalInput.agentId} compact /><StatusDot status="waiting" /></span>
-                <span><strong>{terminalInput.title}</strong><small>Complete this step in the managed terminal.</small></span>
+                <span>
+                  <strong>{state.agents[terminalInput.agentId].label} needs input</strong>
+                  <small>{terminalInput.terminalLabel ?? 'Terminal'}</small>
+                </span>
               </div>
               <button type="button" className="icon-button" data-no-drag="true" onClick={onCollapse} aria-label="Collapse">
                 <CloseIcon />
               </button>
             </div>
             <div className="handoff-body">
-              <p>{terminalInput.detail?.split('\n')[0] || 'This prompt has choices or typed input that Agent Island should not answer automatically.'}</p>
-              <button
-                type="button"
-                className="terminal-handoff-button"
-                data-no-drag="true"
-                disabled={isMorphing}
-                onClick={() => onContinueInTerminal(terminalInput.agentId, terminalInput.id)}
-              >
-                <TerminalIcon />
-                <span><strong>Continue in Terminal</strong><small>Move it to this display and focus the prompt</small></span>
-              </button>
+              <p>{terminalInput.detail?.split('\n')[0] || terminalInput.title}</p>
+              {terminalInput.canRaiseWindow === false ? (
+                <p className="handoff-note">
+                  {terminalInput.terminalLabel ?? 'This terminal'} does not expose a window Agent
+                  Island can raise. Switch to it yourself to answer.
+                </p>
+              ) : (
+                <button
+                  type="button"
+                  className="terminal-handoff-button"
+                  data-no-drag="true"
+                  disabled={isMorphing}
+                  /* The *session* id, not the prompt id — handoff raises the
+                     window hosting the session, and the prompt is answered in
+                     the terminal, not here. */
+                  onClick={() => onContinueInTerminal(terminalInput.agentId, terminalInput.sessionId)}
+                >
+                  <TerminalIcon />
+                  <span>
+                    <strong>Continue in Terminal</strong>
+                    <small>Bring {terminalInput.terminalLabel ?? 'the terminal'} to the front</small>
+                  </span>
+                </button>
+              )}
             </div>
           </motion.div>
         ) : state.mode === 'approval' && approval ? (

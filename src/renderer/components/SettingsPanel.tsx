@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import type { IslandSettings, PreferredDockSide } from '@shared/contracts'
 import { CloseIcon } from './icons'
 
@@ -26,6 +27,32 @@ function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (che
 
 export function SettingsPanel({ settings, onChange, onClose, onReturnHome }: SettingsPanelProps) {
   const setDock = (value: string) => onChange({ preferredDockSide: value as PreferredDockSide })
+  const [shimBusy, setShimBusy] = useState(false)
+  const [shimNote, setShimNote] = useState('')
+
+  useEffect(() => {
+    void window.agentIsland.shimStatus().then((status) => {
+      if (!status.wrapperExists) setShimNote('Wrapper missing — rebuild Agent Island.')
+    })
+  }, [])
+
+  const toggleShims = async () => {
+    setShimBusy(true)
+    const result = settings.shellShimsInstalled
+      ? await window.agentIsland.uninstallShims()
+      : await window.agentIsland.installShims()
+    setShimBusy(false)
+    if (result.ok) {
+      onChange({ shellShimsInstalled: !settings.shellShimsInstalled })
+      setShimNote(
+        settings.shellShimsInstalled
+          ? 'Removed. Open a new terminal for it to take effect.'
+          : 'Installed. Open a new terminal for it to take effect.'
+      )
+    } else {
+      setShimNote(result.errors[0] ?? 'Could not update the shell profiles.')
+    }
+  }
 
   return (
     <div className="settings-view">
@@ -98,6 +125,41 @@ export function SettingsPanel({ settings, onChange, onClose, onReturnHome }: Set
               <option value="right">Right</option>
             </select>
           </label>
+        </section>
+
+        <section className="settings-group">
+          <h3>Terminals</h3>
+          <label className="setting-row">
+            <span>
+              <strong>Bring the terminal to this display</strong>
+              <small>On &ldquo;Continue in Terminal&rdquo;, move the agent&rsquo;s window to the display Agent Island is on. Turn off to focus it where it already is.</small>
+            </span>
+            <Toggle
+              checked={settings.moveTerminalToIsland}
+              onChange={(value) => onChange({ moveTerminalToIsland: value })}
+              label="Bring the terminal to this display"
+            />
+          </label>
+          <div className="setting-action">
+            <span>
+              <strong>Shell integration</strong>
+              <small>
+                {settings.shellShimsInstalled
+                  ? 'claude, codex and hermes run through Agent Island so their sessions are visible.'
+                  : 'Without this, run "island claude" to make a session visible. Shims fall back to the real command if anything goes wrong.'}
+                {shimNote ? ` ${shimNote}` : ''}
+              </small>
+            </span>
+            <button
+              type="button"
+              className="setting-action-button"
+              data-no-drag="true"
+              disabled={shimBusy}
+              onClick={() => void toggleShims()}
+            >
+              {settings.shellShimsInstalled ? 'Remove' : 'Install'}
+            </button>
+          </div>
         </section>
 
         <section className="settings-group">

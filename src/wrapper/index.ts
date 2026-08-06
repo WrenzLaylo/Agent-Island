@@ -1,0 +1,541 @@
+/**
+ * `island <agent> [args…]` — the shim that makes a real terminal session
+ * visible to Agent Island.
+ *
+ * It runs *inside* the terminal you already have open. It does three things and
+ * then gets out of the way:
+ *
+ *  1. Resolves which OS window is hosting it, by setting a unique title and
+ *     looking for the window that now carries it (see `resolveHostWindow`).
+ *  2. Publishes that window, plus its pid and cwd, to the session registry.
+ *  3. Runs the real agent in a pty and pipes it straight through, so the user
+ *     sees an ordinary session while the wrapper watches the output stream for
+ *     prompts and republishes them for the island.
+ *
+ * It never opens a window, never renders a terminal, and never starts a second
+ * agent. Exit code and stdio are transparent: if the wrapper fails for any
+ * reason it must still leave the user with a working agent.
+ */
+import { spawn as ptySpawn, type IPty } from 'node-pty'
+import { randomUUID } from 'node:crypto'
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { discoverAgents } from '../main/agents/discover'
+import { adapterEnv, buildLaunchSpec } from '../main/agents/launch'
+import {
+  createApprovalTrackerState,
+  resolveHermesResponseKeys,
+  updateHermesApprovalTracker,
+  type ApprovalTrackerState
+} from '../main/agents/hermes-approval'
+import { resolveCodexResponseKeys, updateCodexApprovalTracker } from '../main/agents/codex-approval'
+import {
+  createTerminalInputTrackerState,
+  updateTerminalInputTracker,
+  type TerminalInputTrackerState
+} from '../main/agents/terminal-input'
+import { normalizeTerminalText } from '../shared/ansi'
+import type { AgentId, ApprovalDecision } from '../shared/contracts'
+import {
+  SESSION_HEARTBEAT_MS,
+  type AgentSessionRecord,
+  type SessionDecisionRecord,
+  type SessionPromptRecord,
+  type TerminalKind
+} from '../shared/session-registry'
+import { decisionsDir, ensureRegistryDirs, promptsDir, sessionsDir } from '../node/registry-paths'
+import { findWindowsByTitle } from '../node/win32-windows'
+
+/** Control bytes, named rather than embedded raw in source. */
+const ESC = String.fromCharCode(27)
+const BEL = String.fromCharCode(7)
+const ETX = String.fromCharCode(3)
+/** OSC introducer: ESC ] — the `]` is not optional. */
+const OSC = `${ESC}]`
+
+const SCAN_TAIL_CHARS = 24_000
+const MAX_REPLAY = 80_000
+const DECISION_POLL_MS = 200
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function isAgentId(value: string | undefined): value is AgentId {
+  return value === 'claude' || value === 'codex' || value === 'hermes'
+}
+
+function usage(): never {
+  process.stderr.write(
+    'Usage: island <claude|codex|hermes> [args…]\n\n' +
+      'Runs the agent in this terminal and makes the session visible to\n' +
+      'Agent Island, so "Continue in Terminal" can bring this exact window\n' +
+      'back to the front.\n'
+  )
+  process.exit(2)
+}
+
+/**
+ * Find the OS window hosting this process.
+ *
+ * There is no API for "which window am I in". `GetConsoleWindow()` returns a
+ * 0x0 pseudo-console inside Windows Terminal, and a Windows Terminal *process*
+ * owns every one of its windows, so a pid lookup is ambiguous. What does work
+ * on every host tested is a title handshake: set a unique title, find the
+ * window now carrying it, put the title back.
+ *
+ * This must happen at startup, while this tab is still the active one — a
+ * terminal's window title reflects its active tab, and shells overwrite the
+ * title continuously afterwards. The HWND is cached from here on.
+ */
+async function resolveHostWindow(agentId: AgentId): Promise<{ hwnd: number | null; kind: TerminalKind; label: string }> {
+  const marker = `agent-island-${randomUUID()}`
+  const setTitle = (value: string) => {
+    // SetConsoleTitleW — covers classic conhost and Windows Terminal.
+    try {
+      process.title = value
+    } catch {
+      // Non-fatal; the OSC below may still work.
+    }
+    // OSC 0 — covers mintty, VS Code and any xterm-compatible emulator, none of
+    // which have a Win32 console for the call above to act on.
+    //
+    // Written unconditionally: under ELECTRON_RUN_AS_NODE inside a ConPTY,
+    // `process.stdout.isTTY` reports false even when stdout really is the
+    // terminal, so gating on it silently disabled mintty support.
+    try {
+      process.stdout.write(`${OSC}0;${value}${BEL}`)
+    } catch {
+      // ignore
+    }
+  }
+
+  let matches: Awaited<ReturnType<typeof findWindowsByTitle>> = []
+  let searchError: string | null = null
+  // Terminals apply a title change asynchronously, and anything else sharing
+  // this console can overwrite it in between. Re-assert and re-look rather than
+  // giving up after one attempt.
+  for (let attempt = 0; attempt < 3 && matches.length === 0; attempt += 1) {
+    setTitle(marker)
+    try {
+      matches = await findWindowsByTitle(marker)
+    } catch (error) {
+      searchError = String(error)
+    }
+    if (matches.length === 0) await delay(200)
+  }
+  setTitle(agentId)
+  writeHandshakeDiagnostic(marker, matches, searchError)
+
+  const hit = matches[0]
+  if (!hit) {
+    // VS Code panels and unknown emulators land here. The session still
+    // registers; the island will say the window cannot be raised rather than
+    // raising something arbitrary.
+    const kind: TerminalKind = process.env.TERM_PROGRAM === 'vscode' ? 'vscode' : 'unknown'
+    return { hwnd: null, kind, label: kind === 'vscode' ? 'VS Code terminal' : 'Terminal' }
+  }
+
+  const cls = hit.className
+  const kind: TerminalKind =
+    cls === 'CASCADIA_HOSTING_WINDOW_CLASS'
+      ? 'windows-terminal'
+      : cls === 'mintty'
+        ? 'mintty'
+        : cls === 'ConsoleWindowClass'
+          ? 'conhost'
+          : process.env.TERM_PROGRAM === 'vscode'
+            ? 'vscode'
+            : 'unknown'
+  const label =
+    kind === 'windows-terminal'
+      ? 'Windows Terminal'
+      : kind === 'mintty'
+        ? 'Git Bash'
+        : kind === 'conhost'
+          ? 'Console'
+          : kind === 'vscode'
+            ? 'VS Code terminal'
+            : 'Terminal'
+  return { hwnd: hit.hwnd, kind, label }
+}
+
+class SessionFiles {
+  readonly sessionPath: string
+  readonly promptPath: string
+  readonly decisionPath: string
+
+  constructor(readonly id: string) {
+    this.sessionPath = join(sessionsDir(), `${id}.json`)
+    this.promptPath = join(promptsDir(), `${id}.json`)
+    this.decisionPath = join(decisionsDir(), `${id}.json`)
+  }
+
+  writeSession(record: AgentSessionRecord): void {
+    writeAtomic(this.sessionPath, JSON.stringify(record, null, 2))
+  }
+
+  writePrompt(record: SessionPromptRecord): void {
+    writeAtomic(this.promptPath, JSON.stringify(record, null, 2))
+  }
+
+  clearPrompt(): void {
+    safeRemove(this.promptPath)
+    safeRemove(this.decisionPath)
+  }
+
+  readDecision(): SessionDecisionRecord | null {
+    try {
+      if (!existsSync(this.decisionPath)) return null
+      const raw = readFileSync(this.decisionPath, 'utf8')
+      const parsed = JSON.parse(raw.replace(/^﻿/, '')) as SessionDecisionRecord
+      return parsed?.promptId ? parsed : null
+    } catch {
+      return null
+    }
+  }
+
+  cleanup(): void {
+    safeRemove(this.sessionPath)
+    safeRemove(this.promptPath)
+    safeRemove(this.decisionPath)
+  }
+}
+
+function writeAtomic(target: string, contents: string): void {
+  try {
+    const tmp = `${target}.tmp`
+    writeFileSync(tmp, contents, 'utf8')
+    rmSync(target, { force: true })
+    writeFileSync(target, contents, 'utf8')
+    rmSync(tmp, { force: true })
+  } catch {
+    // The registry is advisory. Never take the user's agent down over it.
+  }
+}
+
+function safeRemove(path: string): void {
+  try {
+    rmSync(path, { force: true })
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * Diagnostics for the handshake, written whenever AGENT_ISLAND_WHOAMI_OUT is
+ * set. Window resolution is the one part of this system that depends on the
+ * host terminal behaving a particular way, so it has to be inspectable without
+ * attaching a debugger to a process running inside someone's shell.
+ */
+function writeHandshakeDiagnostic(
+  marker: string,
+  matches: Array<{ hwnd: number; className: string; pid: number; title: string }>,
+  searchError: string | null
+): void {
+  const target = process.env.AGENT_ISLAND_WHOAMI_OUT
+  if (!target) return
+  try {
+    writeFileSync(
+      target,
+      JSON.stringify(
+        {
+          marker,
+          isTTY: Boolean(process.stdout.isTTY),
+          termProgram: process.env.TERM_PROGRAM ?? null,
+          wtSession: process.env.WT_SESSION ?? null,
+          searchError,
+          matchCount: matches.length,
+          matches
+        },
+        null,
+        2
+      ),
+      'utf8'
+    )
+  } catch {
+    // diagnostics only
+  }
+}
+
+/**
+ * `island --whoami` — report what the handshake can see from this terminal.
+ * Users need a way to find out whether their terminal is supported without
+ * starting an agent, and it is the first thing to run when handoff misbehaves.
+ */
+async function whoami(): Promise<void> {
+  const host = await resolveHostWindow('claude')
+  const lines = [
+    `stdout is a TTY:   ${process.stdout.isTTY ? 'yes' : 'no'}`,
+    `TERM_PROGRAM:      ${process.env.TERM_PROGRAM || '(unset)'}`,
+    `WT_SESSION:        ${process.env.WT_SESSION || '(unset)'}`,
+    `resolved terminal: ${host.label} (${host.kind})`,
+    `window handle:     ${host.hwnd == null ? 'not found — handoff cannot raise this terminal' : String(host.hwnd)}`
+  ]
+  // stderr, not stdout: the handshake writes an OSC title sequence to stdout,
+  // so anything redirecting stdout would swallow it and break the very thing
+  // this command exists to report on.
+  process.stderr.write(`${lines.join('\n')}\n`)
+
+}
+
+async function main(): Promise<void> {
+  const [, , rawAgent, ...rest] = process.argv
+  if (rawAgent === '--whoami') {
+    await whoami()
+    process.exit(0)
+  }
+  if (rawAgent === '--help' || rawAgent === '-h' || !rawAgent) usage()
+  if (!isAgentId(rawAgent)) {
+    process.stderr.write(`Unknown agent "${rawAgent}".\n`)
+    usage()
+  }
+  const agentId: AgentId = rawAgent
+
+  // Before anything else: discovery shells out to `<agent> --version`, and
+  // those children share this console and can overwrite the title the
+  // handshake relies on. Resolve the window while the terminal is untouched.
+  ensureRegistryDirs()
+  const host = await resolveHostWindow(agentId)
+
+  const discovery = await discoverAgents()
+  const agent = discovery.agents.find((item) => item.id === agentId)
+  if (!agent?.available) {
+    process.stderr.write(`${agentId} was not found on PATH.\n`)
+    process.exit(127)
+  }
+
+  const launch = buildLaunchSpec(agent, process.cwd(), rest.length ? { args: rest } : undefined)
+  if ('error' in launch) {
+    process.stderr.write(`${launch.error}\n`)
+    process.exit(127)
+  }
+
+  const id = randomUUID()
+  const files = new SessionFiles(id)
+
+  const record: AgentSessionRecord = {
+    id,
+    agentId,
+    pid: process.pid,
+    hwnd: host.hwnd,
+    terminalKind: host.kind,
+    terminalLabel: host.label,
+    cwd: process.cwd(),
+    startedAt: Date.now(),
+    heartbeatAt: Date.now()
+  }
+  files.writeSession(record)
+
+  const heartbeat = setInterval(() => {
+    files.writeSession({ ...record, heartbeatAt: Date.now() })
+  }, SESSION_HEARTBEAT_MS)
+  heartbeat.unref?.()
+
+  const cols = process.stdout.columns && process.stdout.columns > 0 ? process.stdout.columns : 120
+  const rows = process.stdout.rows && process.stdout.rows > 0 ? process.stdout.rows : 30
+
+  let term: IPty
+  try {
+    term = ptySpawn(launch.command, launch.args, {
+      name: 'xterm-256color',
+      cols,
+      rows,
+      cwd: launch.cwd,
+      env: {
+        ...process.env,
+        ...adapterEnv(agentId),
+        TERM: 'xterm-256color',
+        COLORTERM: 'truecolor',
+        AGENT_ISLAND: '1',
+        AGENT_ISLAND_SESSION: id
+      } as Record<string, string>
+    })
+  } catch (error) {
+    clearInterval(heartbeat)
+    files.cleanup()
+    process.stderr.write(`Could not start ${agentId}: ${String(error)}\n`)
+    process.exit(1)
+  }
+
+  let replay = ''
+  let approval: ApprovalTrackerState = createApprovalTrackerState()
+  let terminalInput: TerminalInputTrackerState = createTerminalInputTrackerState()
+  let livePromptId: string | null = null
+
+  const publishApproval = (request: {
+    id: string
+    summary: string
+    detail: string
+    cwd: string
+    risk: SessionPromptRecord['risk']
+    riskReason?: string
+    expiresAt: number
+    fingerprint?: string
+    choices?: ApprovalDecision[]
+  }) => {
+    livePromptId = request.id
+    files.writePrompt({
+      sessionId: id,
+      agentId,
+      kind: 'approval',
+      promptId: request.id,
+      title: request.summary,
+      detail: request.detail,
+      cwd: request.cwd,
+      createdAt: Date.now(),
+      expiresAt: request.expiresAt,
+      fingerprint: request.fingerprint ?? request.id,
+      choices: request.choices,
+      risk: request.risk,
+      riskReason: request.riskReason
+    })
+  }
+
+  const publishHandoff = (prompt: { id: string; title: string; detail?: string; expiresAt: number; fingerprint: string }) => {
+    livePromptId = prompt.id
+    files.writePrompt({
+      sessionId: id,
+      agentId,
+      kind: 'handoff',
+      promptId: prompt.id,
+      title: prompt.title,
+      detail: prompt.detail ?? '',
+      cwd: process.cwd(),
+      createdAt: Date.now(),
+      expiresAt: prompt.expiresAt,
+      fingerprint: prompt.fingerprint
+    })
+  }
+
+  const clearPrompt = () => {
+    livePromptId = null
+    files.clearPrompt()
+  }
+
+  const scan = () => {
+    const text = normalizeTerminalText(replay.length > SCAN_TAIL_CHARS ? replay.slice(-SCAN_TAIL_CHARS) : replay)
+
+    if (agentId === 'hermes' || agentId === 'codex') {
+      const update =
+        agentId === 'hermes'
+          ? updateHermesApprovalTracker({
+              state: approval,
+              chunkOrFullBuffer: text,
+              agentId,
+              cwd: process.cwd(),
+              processAlive: true
+            })
+          : updateCodexApprovalTracker({
+              state: approval,
+              chunkOrFullBuffer: text,
+              cwd: process.cwd(),
+              processAlive: true
+            })
+      approval = update.state
+      if (update.cleared) clearPrompt()
+      if (update.raised) publishApproval(update.raised)
+    }
+
+    const inputUpdate = updateTerminalInputTracker({
+      state: terminalInput,
+      chunkOrFullBuffer: text,
+      agentId,
+      cwd: process.cwd(),
+      processAlive: true,
+      suppress: Boolean(approval.pending)
+    })
+    terminalInput = inputUpdate.state
+    if (inputUpdate.cleared) clearPrompt()
+    if (inputUpdate.raised) publishHandoff(inputUpdate.raised)
+  }
+
+  term.onData((data) => {
+    process.stdout.write(data)
+    replay = (replay + data).slice(-MAX_REPLAY)
+    scan()
+  })
+
+  // Answers arrive as files so the island can restart without losing them.
+  const decisionPoll = setInterval(() => {
+    if (!livePromptId) return
+    const decision = files.readDecision()
+    if (!decision || decision.promptId !== livePromptId) return
+    const pending = approval.pending
+    if (!pending || pending.id !== decision.promptId) {
+      clearPrompt()
+      return
+    }
+    const keys =
+      agentId === 'hermes'
+        ? resolveHermesResponseKeys(approval, decision.choice)
+        : resolveCodexResponseKeys(approval, decision.choice)
+    if (keys.ok) {
+      try {
+        term.write(keys.keys)
+      } catch {
+        // The agent may have moved on; the next scan will resync.
+      }
+    }
+    approval = { pending: null, lastFingerprint: pending.fingerprint ?? null, responseKeys: null }
+    clearPrompt()
+  }, DECISION_POLL_MS)
+  decisionPoll.unref?.()
+
+  if (process.stdin.isTTY) {
+    process.stdin.setRawMode(true)
+  }
+  process.stdin.resume()
+  process.stdin.on('data', (chunk: Buffer) => {
+    try {
+      term.write(chunk.toString('utf8'))
+    } catch {
+      // ignore writes to a dead pty
+    }
+  })
+
+  const onResize = () => {
+    const c = process.stdout.columns && process.stdout.columns > 0 ? process.stdout.columns : cols
+    const r = process.stdout.rows && process.stdout.rows > 0 ? process.stdout.rows : rows
+    try {
+      term.resize(c, r)
+    } catch {
+      // ignore
+    }
+  }
+  process.stdout.on('resize', onResize)
+
+  const shutdown = (code: number) => {
+    clearInterval(heartbeat)
+    clearInterval(decisionPoll)
+    files.cleanup()
+    if (process.stdin.isTTY) {
+      try {
+        process.stdin.setRawMode(false)
+      } catch {
+        // ignore
+      }
+    }
+    process.stdin.pause()
+    process.exit(code)
+  }
+
+  term.onExit(({ exitCode }) => shutdown(exitCode ?? 0))
+  process.on('SIGINT', () => {
+    // Ctrl+C belongs to the agent, not the wrapper.
+    try {
+      term.write(ETX)
+    } catch {
+      shutdown(130)
+    }
+  })
+  process.on('exit', () => {
+    clearInterval(heartbeat)
+    files.cleanup()
+  })
+}
+
+main().catch((error) => {
+  process.stderr.write(`island: ${String(error)}\n`)
+  process.exit(1)
+})
