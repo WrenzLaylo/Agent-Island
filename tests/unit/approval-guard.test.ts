@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { canApproveRequest } from '../../src/shared/approval-guard'
+import { APPROVAL_REARM_MS, approvalReArmed, canApproveRequest } from '../../src/shared/approval-guard'
 import type { ApprovalRequest } from '../../src/shared/contracts'
 
 function makeRequest(overrides: Partial<ApprovalRequest> = {}): ApprovalRequest {
@@ -69,5 +69,41 @@ describe('canApproveRequest', () => {
   it('rejects unknown risk', () => {
     const request = makeRequest({ risk: 'unknown' })
     expect(canApproveRequest({ request, displayedRequestId: 'req-1' }).canApprove).toBe(false)
+  })
+})
+
+describe('approvalReArmed', () => {
+  const shownAt = 1_700_000_000_000
+
+  it('keeps a freshly displayed approval inert', () => {
+    expect(approvalReArmed(shownAt, shownAt)).toBe(false)
+  })
+
+  it('stays inert for the whole re-arm window', () => {
+    expect(approvalReArmed(shownAt, shownAt + APPROVAL_REARM_MS - 1)).toBe(false)
+  })
+
+  it('arms once the window has elapsed', () => {
+    expect(approvalReArmed(shownAt, shownAt + APPROVAL_REARM_MS)).toBe(true)
+  })
+
+  it('outlasts the second click of an accidental double-click', () => {
+    // The pair that motivates the guard: answer one approval, the next is
+    // promoted into the same card, and the stray second click lands ~120ms
+    // later on buttons sitting in the identical screen position.
+    expect(approvalReArmed(shownAt, shownAt + 120)).toBe(false)
+  })
+
+  it('refuses rather than arms when the clock runs backwards', () => {
+    expect(approvalReArmed(shownAt, shownAt - 5_000)).toBe(false)
+  })
+
+  it('refuses when either timestamp is not a real time', () => {
+    expect(approvalReArmed(Number.NaN, shownAt)).toBe(false)
+    expect(approvalReArmed(shownAt, Number.NaN)).toBe(false)
+  })
+
+  it('arms immediately when the delay is disabled', () => {
+    expect(approvalReArmed(shownAt, shownAt, 0)).toBe(true)
   })
 })

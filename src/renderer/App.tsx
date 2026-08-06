@@ -20,11 +20,24 @@ import {
 } from '@shared/island-machine'
 import { canApproveRequest } from '@shared/approval-guard'
 import type { AgentSessionRecord, SessionPromptRecord } from '@shared/session-registry'
+import { buildSessionRows } from '@shared/session-list'
 import { IslandShell, type IslandPanel } from './components/IslandShell'
 
 function isVisibleActivity(status: IslandSnapshot['agents'][AgentId]['status']): boolean {
   return status === 'running' || status === 'thinking' || status === 'waiting' || status === 'completed' || status === 'error'
 }
+
+/**
+ * Session list geometry. These mirror `--session-row-h` and the `gap` on
+ * `.session-list` in globals.css — the window is sized from a row count here,
+ * so if the CSS changes and these do not, the last row clips.
+ */
+const SESSION_ROW_H = 38
+const SESSION_ROW_GAP = 4
+/** Height of the expanded shell above the list: header plus status body. */
+const EXPANDED_BASE_H = 148
+/** Past this the list scrolls rather than growing the window further. */
+const MAX_VISIBLE_SESSION_ROWS = 4
 
 /**
  * Window size == visible size. There is no native mask and no frame inset any
@@ -36,7 +49,8 @@ function sizeForPresentation(
   docked: DockSide | null,
   approvalChoiceCount: number,
   panel: IslandPanel,
-  quietIdle: boolean
+  quietIdle: boolean,
+  sessionRowCount: number
 ): { width: number; height: number } {
   if (panel === 'settings') return { width: 440, height: 600 }
   if (panel === 'onboarding') return { width: 400, height: 380 }
@@ -48,6 +62,14 @@ function sizeForPresentation(
       return quietIdle ? { width: 116, height: 32 } : { width: 300, height: 52 }
     case 'peek':
     case 'expanded':
+      // With 2+ sessions the agent tabs give way to one row per session, so
+      // the window has to grow to hold them. Beyond MAX_VISIBLE_SESSION_ROWS
+      // the list scrolls instead: an island tall enough for ten sessions stops
+      // being an island.
+      if (sessionRowCount > 1) {
+        const rows = Math.min(sessionRowCount, MAX_VISIBLE_SESSION_ROWS)
+        return { width: 400, height: EXPANDED_BASE_H + rows * SESSION_ROW_H + (rows - 1) * SESSION_ROW_GAP }
+      }
       return { width: 400, height: 172 }
     case 'success':
       return { width: 340, height: 96 }
@@ -179,6 +201,9 @@ export function App() {
   const soundedApprovals = useRef(new Set<string>())
   const completionTimers = useRef<Partial<Record<AgentId, number>>>({})
   const sessionsRef = useRef<AgentSessionRecord[]>([])
+  // The ref is read from listener closures that must not re-subscribe; the
+  // state is what lets the panel actually render one row per live session.
+  const [sessions, setSessions] = useState<AgentSessionRecord[]>([])
 
   useEffect(() => {
     stateRef.current = state
@@ -194,6 +219,10 @@ export function App() {
 
   const approval = currentApproval(state)
   const queueCount = pendingApprovalCount(state)
+  const sessionRows = useMemo(
+    () => buildSessionRows(sessions, Object.values(state.approvals)),
+    [sessions, state.approvals]
+  )
   const selectedActive = state.agents[state.activeAgentId]
   const activityAgent = isVisibleActivity(selectedActive.status)
     ? selectedActive
@@ -209,8 +238,16 @@ export function App() {
     queueCount === 0 &&
     !activityAgent
   const size = useMemo(
-    () => sizeForPresentation(state.mode, docked, approval?.choices?.length ?? 2, panel, quietIdle),
-    [state.mode, docked, approval?.choices?.length, panel, quietIdle]
+    () =>
+      sizeForPresentation(
+        state.mode,
+        docked,
+        approval?.choices?.length ?? 2,
+        panel,
+        quietIdle,
+        sessionRows.length
+      ),
+    [state.mode, docked, approval?.choices?.length, panel, quietIdle, sessionRows.length]
   )
 
   useEffect(() => {
@@ -402,6 +439,7 @@ export function App() {
     // this agent is alive", nothing more.
     const applySessions = (sessions: AgentSessionRecord[]) => {
       sessionsRef.current = sessions
+      setSessions(sessions)
       for (const id of AGENT_ORDER) {
         const live = sessions.filter((s) => s.agentId === id)
         const agent = stateRef.current.agents[id]
@@ -830,6 +868,7 @@ export function App() {
           approval={approval}
           terminalInput={terminalInput ?? undefined}
           queueCount={queueCount}
+          sessionRows={sessionRows}
           approveEnabled={approveEnabled}
           statusNote={statusNote}
           docked={docked}
@@ -845,8 +884,8 @@ export function App() {
             dispatch({ type: 'COLLAPSE' })
           }}
           onDecision={(decision) => void onDecision(decision)}
-          onContinueInTerminal={(agentId, promptId) => void openTerminal(agentId, promptId)}
-          onOpenTerminal={(agentId) => void openTerminal(agentId)}
+          onContinueInTerminal={(agentId, sessionId) => void openTerminal(agentId, sessionId)}
+          onOpenTerminal={(agentId, sessionId) => void openTerminal(agentId, sessionId)}
           onDismiss={() => dispatch({ type: 'DISMISS_TRANSIENT' })}
           onOpenSettings={() => setPanel('settings')}
           onClosePanel={() => setPanel(null)}

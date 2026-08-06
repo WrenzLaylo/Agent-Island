@@ -1,5 +1,6 @@
 import { motion } from 'framer-motion'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { APPROVAL_REARM_MS, approvalReArmed } from '@shared/approval-guard'
 import { AGENT_LABELS, type ApprovalDecision, type ApprovalRequest } from '@shared/contracts'
 
 interface ApprovalCardProps {
@@ -87,7 +88,27 @@ export function ApprovalCard({ approval, approveEnabled, disabled = false, onDec
 
   useEffect(() => setConfirmPermanent(false), [approval.id])
 
+  /**
+   * Answering one approval promotes the next queued one into this same card,
+   * so the buttons stay inert briefly whenever the request id changes. Without
+   * it, the second half of an accidental double-click answers a request the
+   * user has not read yet — see APPROVAL_REARM_MS.
+   */
+  const [armed, setArmed] = useState(false)
+  const shownAtRef = useRef(0)
+  useEffect(() => {
+    shownAtRef.current = Date.now()
+    setArmed(false)
+    const timer = window.setTimeout(() => setArmed(true), APPROVAL_REARM_MS)
+    return () => window.clearTimeout(timer)
+  }, [approval.id])
+
+  const inert = disabled || !armed
+
   const choose = (choice: ApprovalDecision) => {
+    // The disabled attribute already covers pointer clicks; this also refuses
+    // keyboard activation and anything that replays an event into the card.
+    if (!approvalReArmed(shownAtRef.current, Date.now())) return
     if (choice === 'always') {
       setConfirmPermanent(true)
       return
@@ -147,7 +168,7 @@ export function ApprovalCard({ approval, approveEnabled, disabled = false, onDec
               type="button"
               className="permanent-button"
               data-no-drag="true"
-              disabled={!approveEnabled || disabled}
+              disabled={!approveEnabled || inert}
               onClick={() => onDecision('always')}
             >
               Confirm permanent access
@@ -158,7 +179,7 @@ export function ApprovalCard({ approval, approveEnabled, disabled = false, onDec
         <div className={`decision-list choices-${choices.length}`}>
           {choices.map((choice) => {
             const isDeny = choice === 'deny'
-            const buttonDisabled = disabled || (!isDeny && !approveEnabled)
+            const buttonDisabled = inert || (!isDeny && !approveEnabled)
             return (
               <motion.button
                 key={choice}

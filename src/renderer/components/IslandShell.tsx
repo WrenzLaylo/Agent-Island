@@ -11,7 +11,9 @@ import type {
 } from '@shared/contracts'
 import { AGENT_ORDER } from '@shared/contracts'
 import { AgentMark } from './AgentMark'
+import { folderName, type SessionRow } from '@shared/session-list'
 import { AgentTabs } from './AgentTabs'
+import { SessionList } from './SessionList'
 import { ApprovalCard } from './ApprovalCard'
 import { OnboardingCard } from './OnboardingCard'
 import { SettingsPanel } from './SettingsPanel'
@@ -26,6 +28,7 @@ interface IslandShellProps {
   approval?: ApprovalRequest
   terminalInput?: TerminalInputPrompt
   queueCount: number
+  sessionRows: SessionRow[]
   approveEnabled: boolean
   statusNote: string
   docked: DockSide | null
@@ -39,7 +42,7 @@ interface IslandShellProps {
   onCollapse: () => void
   onDecision: (decision: ApprovalDecision) => void
   onContinueInTerminal: (agentId: AgentId, sessionId?: string) => void
-  onOpenTerminal: (agentId: AgentId) => void
+  onOpenTerminal: (agentId: AgentId, sessionId?: string) => void
   onDismiss: () => void
   onOpenSettings: () => void
   onClosePanel: () => void
@@ -67,26 +70,6 @@ function DockRing({ status }: { status: string }) {
   )
 }
 
-/**
- * Last path segment, for telling two sessions apart at a glance.
- *
- * The terminal label alone is only the terminal *type*, so two Windows
- * Terminal sessions read identically. The folder is what actually differs
- * between concurrent sessions, and approving the wrong one is not recoverable.
- */
-function folderName(cwd: string | undefined): string {
-  if (!cwd) return ''
-  // Index arithmetic rather than a character class: a class holding both
-  // separators is easy to mis-escape into one that matches only `/`, which
-  // silently leaves Windows paths unsplit and prints the whole path.
-  const SEPARATORS = ['/', String.fromCharCode(92)]
-  let end = cwd.length
-  while (end > 0 && SEPARATORS.includes(cwd[end - 1])) end -= 1
-  const trimmed = cwd.slice(0, end)
-  let cut = -1
-  for (const separator of SEPARATORS) cut = Math.max(cut, trimmed.lastIndexOf(separator))
-  return cut >= 0 ? trimmed.slice(cut + 1) : trimmed
-}
 
 function ActivityGlyph({ waiting = false }: { waiting?: boolean }) {
   return (
@@ -137,6 +120,32 @@ function statusDescription(active: AgentSnapshot): string {
   }
 }
 
+/*
+ * Once the panel lists every session, the status line above it has to describe
+ * every session too. The per-agent labels count only the *active* agent, which
+ * reads as a contradiction directly above the list — "3 sessions open" sitting
+ * on top of four rows, because the fourth belongs to Codex.
+ */
+function sessionsWaiting(rows: SessionRow[]): number {
+  return rows.reduce((total, row) => total + row.pendingApprovals, 0)
+}
+
+function sessionsBusy(rows: SessionRow[]): boolean {
+  return rows.some((row) => row.busy) || sessionsWaiting(rows) > 0
+}
+
+function sessionHeadline(rows: SessionRow[]): string {
+  if (sessionsWaiting(rows) > 0) return 'Needs you'
+  return rows.some((row) => row.busy) ? 'Working' : 'Ready'
+}
+
+function sessionSummary(rows: SessionRow[]): string {
+  const waiting = sessionsWaiting(rows)
+  const working = rows.filter((row) => row.busy).length
+  const detail = waiting > 0 ? `${waiting} waiting on you` : working > 0 ? `${working} working` : 'all idle'
+  return `${rows.length} sessions · ${detail}`
+}
+
 /** Motion only where something is genuinely in flight. */
 function showsActivity(status: AgentSnapshot['status']): boolean {
   return status === 'running' || status === 'thinking' || status === 'waiting'
@@ -183,6 +192,7 @@ export function IslandShell(props: IslandShellProps) {
     approval,
     terminalInput,
     queueCount,
+    sessionRows,
     approveEnabled,
     statusNote,
     docked,
@@ -205,6 +215,9 @@ export function IslandShell(props: IslandShellProps) {
     onReturnHome
   } = props
 
+  // Past one session, "which agent" stops identifying anything actionable —
+  // two Claude sessions are one tab — so the panel addresses sessions instead.
+  const multiSession = sessionRows.length > 1
   const hasApproval = queueCount > 0
   const hasTerminalInput = Boolean(terminalInput)
   const hasAttention = hasApproval || hasTerminalInput
@@ -418,10 +431,12 @@ export function IslandShell(props: IslandShellProps) {
 
             <div className="overview-body">
               <span className="overview-status">
-                {showsActivity(active.status) ? <ActivityGlyph waiting={active.status === 'waiting'} /> : null}
-                <strong>{statusHeadline(active)}</strong>
+                {multiSession
+                  ? sessionsBusy(sessionRows) && <ActivityGlyph waiting={sessionsWaiting(sessionRows) > 0} />
+                  : showsActivity(active.status) && <ActivityGlyph waiting={active.status === 'waiting'} />}
+                <strong>{multiSession ? sessionHeadline(sessionRows) : statusHeadline(active)}</strong>
               </span>
-              <small>{statusDescription(active)}</small>
+              <small>{multiSession ? sessionSummary(sessionRows) : statusDescription(active)}</small>
               {settings.developerDiagnostics ? (
                 <span className="diagnostics-row">
                   <span>{active.integrationMode}</span>
@@ -431,7 +446,12 @@ export function IslandShell(props: IslandShellProps) {
               ) : null}
             </div>
 
-            <AgentTabs agents={AGENT_ORDER.map((id) => state.agents[id])} activeAgentId={state.activeAgentId} onSelect={onSelectAgent} />
+            {/* With one session or none, choosing an agent is still the job. */}
+            {multiSession ? (
+              <SessionList rows={sessionRows} onOpenSession={onOpenTerminal} />
+            ) : (
+              <AgentTabs agents={AGENT_ORDER.map((id) => state.agents[id])} activeAgentId={state.activeAgentId} onSelect={onSelectAgent} />
+            )}
           </motion.div>
         )}
       </AnimatePresence>
