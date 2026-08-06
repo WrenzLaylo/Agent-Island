@@ -469,33 +469,46 @@ select:focus-visible,
 
 /* The ring *is* the status indicator — it is not a second ring drawn around a
    mark of the same diameter, which is what made the docked state look cramped. */
-/* 2px rather than 1.5: a sub-pixel stroke on a curve this size shimmers. */
-.dock-status-ring {
+/*
+ * SVG stroke, not a CSS border. A rotated border-circle is not anti-aliased
+ * cleanly and its transparent side ends in hard mitred corners; a stroked path
+ * is rasterised smoothly and `round` caps soften the arc ends.
+ */
+.dock-ring {
   position: absolute;
-  inset: 3px;
-  border: 2px solid transparent;
-  border-radius: 50%;
-  background: none;
+  inset: 2px;
+  width: auto;
+  height: auto;
+  overflow: visible;
 }
 
-.dock-status-ring.status-running,
-.dock-status-ring.status-thinking {
-  border-color: var(--blue);
-  border-top-color: transparent;
-  animation: dock-spin 1.6s linear infinite;
+.dock-ring circle {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  transform-origin: 50% 50%;
 }
 
-.dock-status-ring.status-waiting {
-  border-color: var(--amber);
-  animation: dock-breathe 1.5s ease-in-out infinite;
+.dock-ring.status-running circle,
+.dock-ring.status-thinking circle {
+  stroke: var(--blue);
+  /* Three quarters of the circumference, leaving a gap that reads as motion. */
+  stroke-dasharray: 99 33;
+  animation: dock-spin 1.4s linear infinite;
 }
 
-.dock-status-ring.status-error { border-color: var(--red); }
-.dock-status-ring.status-idle,
-.dock-status-ring.status-completed { border-color: rgba(95, 211, 154, 0.5); }
+.dock-ring.status-waiting circle {
+  stroke: var(--amber);
+  animation: dock-breathe 1.6s ease-in-out infinite;
+}
+
+.dock-ring.status-error circle { stroke: var(--red); }
+.dock-ring.status-idle circle,
+.dock-ring.status-completed circle { stroke: rgba(95, 211, 154, 0.55); }
 
 @keyframes dock-spin { to { transform: rotate(360deg); } }
-@keyframes dock-breathe { 50% { opacity: 0.45; } }
+@keyframes dock-breathe { 50% { opacity: 0.4; } }
 
 /* Sits *inside* the disc. Anchored to the bounding box corner it was sliced in
    half by the circular surface clip, because a circle has no corner there. At

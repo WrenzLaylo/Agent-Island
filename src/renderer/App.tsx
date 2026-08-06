@@ -406,15 +406,21 @@ export function App() {
         const agent = stateRef.current.agents[id]
         if (!agent.available) continue
         if (agent.pendingApprovalIds.length > 0) continue
+        // "Working" comes from the wrapper actually seeing output, never from
+        // a session merely existing — that is what left the pill insisting an
+        // agent was running long after it had finished.
+        const working = live.some((session) => session.busy)
         dispatch({
           type: 'SET_AGENT_STATUS',
           agentId: id,
-          status: live.length ? 'running' : 'idle',
-          activityLabel: live.length
-            ? live.length > 1
-              ? `${live.length} sessions in terminals`
-              : `Running in ${live[0].terminalLabel}`
-            : 'No session running',
+          status: working ? 'running' : 'idle',
+          activityLabel: !live.length
+            ? 'No session running'
+            : live.length > 1
+              ? `${live.length} sessions open`
+              : working
+                ? `Working in ${live[0].terminalLabel}`
+                : `Session open in ${live[0].terminalLabel}`,
           available: true
         })
       }
@@ -473,6 +479,9 @@ export function App() {
     })
 
     refreshSessions()
+    // Transient labels (a just-answered approval, a cleared prompt) otherwise
+    // stick until a session is added or removed, which may never happen.
+    const statusTimer = window.setInterval(refreshSessions, 3000)
     void api.listSessionPrompts().then((list) => {
       if (disposed || !Array.isArray(list)) return
       for (const prompt of list) {
@@ -507,6 +516,7 @@ export function App() {
       offWindowFocus()
       offTerminalInput()
       offTerminalInputCleared()
+      window.clearInterval(statusTimer)
       offSessionAdded()
       offSessionRemoved()
       offSessionPrompt()

@@ -42,6 +42,13 @@ export interface AgentSessionRecord {
   startedAt: number
   /** Refreshed while the session lives; used to reap crashed wrappers. */
   heartbeatAt: number
+  /**
+   * The agent produced output very recently. This is the only evidence the
+   * island has that an agent is actually doing something — a session merely
+   * existing says nothing about whether it is busy, and treating it as such
+   * left the pill claiming "Working" long after a turn had finished.
+   */
+  busy: boolean
 }
 
 /** A prompt the wrapper detected but the island must not answer for the user. */
@@ -113,7 +120,8 @@ export function parseSessionRecord(raw: string): AgentSessionRecord | null {
       terminalLabel: typeof value.terminalLabel === 'string' ? value.terminalLabel : 'Terminal',
       cwd: typeof value.cwd === 'string' ? value.cwd : '',
       startedAt: typeof value.startedAt === 'number' ? value.startedAt : Date.now(),
-      heartbeatAt: typeof value.heartbeatAt === 'number' ? value.heartbeatAt : 0
+      heartbeatAt: typeof value.heartbeatAt === 'number' ? value.heartbeatAt : 0,
+      busy: value.busy === true
     }
   } catch {
     return null

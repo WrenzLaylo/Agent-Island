@@ -77,19 +77,6 @@ function withAgent(
   }
 }
 
-function decisionActivity(decision: ApprovalDecision): string {
-  switch (decision) {
-    case 'session':
-      return 'Allowed for this session'
-    case 'always':
-      return 'Added to allowlist'
-    case 'deny':
-      return 'Request denied'
-    default:
-      return 'Allowed once'
-  }
-}
-
 function decisionMessage(decision: ApprovalDecision, summary: string): string {
   switch (decision) {
     case 'session':
@@ -270,8 +257,12 @@ export function reduceIsland(state: IslandSnapshot, event: IslandEvent): IslandS
         approvalQueue,
         agents: withAgent(state.agents, request.agentId, {
           pendingApprovalIds,
-          status: pendingApprovalIds.length ? 'waiting' : event.decision === 'deny' ? 'idle' : 'running',
-          activityLabel: pendingApprovalIds.length ? 'Needs approval' : decisionActivity(event.decision)
+          // The decision is acknowledged by the transient card and `message`.
+          // Writing it into the agent's status made a momentary confirmation
+          // ("Allowed once") the agent's permanent state, so the island still
+          // claimed the agent was working long after the turn had finished.
+          status: pendingApprovalIds.length ? 'waiting' : agent.available ? 'idle' : 'offline',
+          activityLabel: pendingApprovalIds.length ? 'Needs approval' : 'Ready'
         }),
         mode: approvalQueue.length ? 'approval' : 'success',
         message: decisionMessage(event.decision, request.summary),

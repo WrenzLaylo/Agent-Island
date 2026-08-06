@@ -58,6 +58,12 @@ const OSC = `${ESC}]`
 const SCAN_TAIL_CHARS = 24_000
 const MAX_REPLAY = 80_000
 const DECISION_POLL_MS = 200
+/**
+ * Quiet for this long and the agent is treated as finished. Long enough to ride
+ * out the pauses inside a turn, short enough that "Working" ends when the turn
+ * does.
+ */
+const IDLE_AFTER_MS = 2500
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -325,9 +331,25 @@ async function main(): Promise<void> {
     terminalLabel: host.label,
     cwd: process.cwd(),
     startedAt: Date.now(),
-    heartbeatAt: Date.now()
+    heartbeatAt: Date.now(),
+    busy: false
   }
   files.writeSession(record)
+
+  // Edge-triggered: the session file is rewritten only when the agent starts
+  // or stops producing output, not on every chunk.
+  let busy = false
+  let lastOutputAt = 0
+  const publishBusy = (next: boolean) => {
+    if (busy === next) return
+    busy = next
+    record.busy = next
+    files.writeSession({ ...record, heartbeatAt: Date.now() })
+  }
+  const busyTimer = setInterval(() => {
+    if (busy && Date.now() - lastOutputAt > IDLE_AFTER_MS) publishBusy(false)
+  }, 500)
+  busyTimer.unref?.()
 
   const heartbeat = setInterval(() => {
     files.writeSession({ ...record, heartbeatAt: Date.now() })
@@ -458,6 +480,8 @@ async function main(): Promise<void> {
   }
 
   term.onData((data) => {
+    lastOutputAt = Date.now()
+    publishBusy(true)
     process.stdout.write(data)
     replay = (replay + data).slice(-MAX_REPLAY)
     scan()
@@ -540,6 +564,7 @@ async function main(): Promise<void> {
   const shutdown = (code: number) => {
     clearInterval(heartbeat)
     clearInterval(decisionPoll)
+    clearInterval(busyTimer)
     files.cleanup()
     if (process.stdin.isTTY) {
       try {

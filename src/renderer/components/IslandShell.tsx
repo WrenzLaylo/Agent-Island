@@ -48,6 +48,25 @@ interface IslandShellProps {
   onReturnHome: () => void
 }
 
+/**
+ * Status ring for the docked orb, drawn as an SVG stroke rather than a CSS
+ * border.
+ *
+ * A `border-radius: 50%` element with a coloured border is not anti-aliased
+ * well once it rotates, and hiding one side with `border-top-color:
+ * transparent` produces hard mitred corners where the visible arc ends. Both
+ * are why the docked orb read as jagged while an agent was working. An SVG
+ * stroke is anti-aliased by the path rasteriser, and `stroke-linecap: round`
+ * gives the arc soft ends.
+ */
+function DockRing({ status }: { status: string }) {
+  return (
+    <svg className={`dock-ring status-${status}`} viewBox="0 0 48 48" aria-hidden="true">
+      <circle cx="24" cy="24" r="21" />
+    </svg>
+  )
+}
+
 function ActivityGlyph({ waiting = false }: { waiting?: boolean }) {
   return (
     <span className={`activity-glyph ${waiting ? 'is-waiting' : ''}`} aria-hidden="true">
@@ -216,7 +235,7 @@ export function IslandShell(props: IslandShellProps) {
           >
             {quietIdle ? null : (
               <>
-                <span className={`dock-status-ring status-${hasApproval ? 'waiting' : active.status}`} />
+                <DockRing status={hasApproval ? 'waiting' : active.status} />
                 <AgentMark agentId={active.id} mini />
                 {/* The badge has to stay round to fit inside the disc, so the
                     count is capped rather than allowed to widen it. */}
