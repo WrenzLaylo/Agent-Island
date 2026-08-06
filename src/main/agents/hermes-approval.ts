@@ -180,7 +180,9 @@ export function classifyCommandRisk(command: string): { level: RiskLevel; reason
   if (/git\s+push/.test(c)) {
     return { level: 'elevated', reason: 'Pushes to remote repository' }
   }
-  return { level: 'low', reason: 'Flagged by Hermes as needing confirmation' }
+  // classifyCommandRisk is shared by the Hermes, Codex and Claude adapters, so
+  // this wording must not name one of them.
+  return { level: 'low', reason: 'The agent asked for confirmation before running this' }
 }
 
 export interface ApprovalTrackerState {

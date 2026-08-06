@@ -1,6 +1,6 @@
 import { motion } from 'framer-motion'
 import { useEffect, useMemo, useState } from 'react'
-import type { ApprovalDecision, ApprovalRequest } from '@shared/contracts'
+import { AGENT_LABELS, type ApprovalDecision, type ApprovalRequest } from '@shared/contracts'
 
 interface ApprovalCardProps {
   approval: ApprovalRequest
@@ -29,12 +29,26 @@ function shortenCommand(command: string, max = 1200): string {
 
 const CHOICE_ORDER: ApprovalDecision[] = ['once', 'session', 'always', 'deny']
 
+/**
+ * Wording follows the agent that raised the request. It used to key off
+ * `source === 'codex-terminal'`, which meant every non-Hermes agent — Claude
+ * included — was described to the user as Codex.
+ */
+function agentLabel(approval: ApprovalRequest): string {
+  return AGENT_LABELS[approval.agentId]
+}
+
+/** Agents that persist a command-prefix rule rather than a literal allowlist. */
+function persistsPrefixRule(approval: ApprovalRequest): boolean {
+  return approval.agentId === 'codex' || approval.agentId === 'claude'
+}
+
 function choiceLabel(choice: ApprovalDecision, approval: ApprovalRequest): string {
   switch (choice) {
     case 'session':
       return 'Allow for this session'
     case 'always':
-      return approval.source === 'codex-terminal' ? "Don't ask again" : 'Add to permanent allowlist'
+      return persistsPrefixRule(approval) ? "Don't ask again" : 'Add to permanent allowlist'
     case 'deny':
       return 'Deny'
     default:
@@ -47,8 +61,8 @@ function choiceHint(choice: ApprovalDecision, approval: ApprovalRequest): string
     case 'session':
       return 'Remember until this agent session ends'
     case 'always':
-      return approval.source === 'codex-terminal'
-        ? 'Codex may persist a matching command-prefix rule across future sessions'
+      return persistsPrefixRule(approval)
+        ? `${agentLabel(approval)} may persist a matching command-prefix rule across future sessions`
         : 'Automatically allow matching commands in future sessions'
     case 'deny':
       return 'Block this action and return control to the agent'
@@ -120,9 +134,9 @@ export function ApprovalCard({ approval, approveEnabled, disabled = false, onDec
           animate={{ opacity: 1, y: 0 }}
         >
           <div>
-            <strong>{approval.source === 'codex-terminal' ? "Stop asking for matching Codex commands?" : 'Allow matching commands automatically?'}</strong>
-            <small>{approval.source === 'codex-terminal'
-              ? 'Codex may save a broad command-prefix rule that remains active in future sessions and workspaces. Confirm only when you understand the displayed scope.'
+            <strong>{persistsPrefixRule(approval) ? `Stop asking for matching ${agentLabel(approval)} commands?` : 'Allow matching commands automatically?'}</strong>
+            <small>{persistsPrefixRule(approval)
+              ? `${agentLabel(approval)} may save a broad command-prefix rule that remains active in future sessions and workspaces. Confirm only when you understand the displayed scope.`
               : 'This permission can apply in future sessions. Only confirm when you trust this command pattern.'}</small>
           </div>
           <div className="permanent-actions">

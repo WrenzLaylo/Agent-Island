@@ -121,7 +121,10 @@ function sessionPromptToApproval(
     waitingForInput: true,
     answered: false,
     superseded: false,
-    source: prompt.agentId === 'hermes' ? 'hermes-terminal' : 'codex-terminal',
+    // Every agent gets its own source. This used to fall through to
+    // 'codex-terminal' for anything that was not Hermes, so Claude approvals
+    // were rendered with Codex's wording.
+    source: `${prompt.agentId}-terminal` as ApprovalRequest['source'],
     fingerprint: prompt.fingerprint,
     choices: prompt.choices,
     sessionId: session.id

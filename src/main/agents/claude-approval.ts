@@ -63,6 +63,13 @@ const YES_ALWAYS_RE = /^Yes,\s*and\s+don['’]t ask again/i
  */
 const NO_RE = /^No\b/i
 
+/**
+ * Interface furniture that shares the panel area with the actual request:
+ * key hints, the working spinner, and mode banners. None of it is the command.
+ */
+const CHROME_RE =
+  /(esc to cancel|tab to amend|ctrl\+[a-z]|shift\+tab|to cycle|^waiting|^working|^cooked|^\W*$|accept edits on|to explain)/i
+
 const EDIT_QUESTION_RE = /\b(edit|create|write|update|apply .*changes?) \b/i
 const COMMAND_QUESTION_RE = /\bproceed\b|\brun\b/i
 
@@ -133,7 +140,13 @@ export function detectClaudeApprovalPanel(rawOutput: string): ClaudeApprovalDete
   if (!choices.some((choice) => choice.key === 'deny')) return null
 
   const question = lines[questionLine]
-  const body = lines.slice(Math.max(0, questionLine - 12), questionLine).filter(Boolean)
+  const body = lines
+    .slice(Math.max(0, questionLine - 12), questionLine)
+    .filter(Boolean)
+    // The lines above the question are not all content: Claude's TUI paints key
+    // hints and a spinner there too, and they were ending up in the command
+    // block as "Esc to cancel · Tab to amend · ctrl+e to explain".
+    .filter((line) => !CHROME_RE.test(line))
 
   const isEdit = EDIT_QUESTION_RE.test(question)
   const isCommand = !isEdit && COMMAND_QUESTION_RE.test(question)

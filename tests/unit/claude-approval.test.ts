@@ -162,4 +162,22 @@ describe('claude approval detection', () => {
     expect(detected?.choices.map((choice) => choice.key)).toEqual(["once", "always", "deny"])
     expect(detected?.responseKeys).toEqual({ once: "1", always: "2", deny: "3" })
   })
+
+  it('keeps TUI chrome out of the command block', () => {
+    // Reproduces what the pill actually showed: the key-hint row and the
+    // spinner were captured as if they were part of the command.
+    const withChrome = panel([
+      'Esc to cancel · Tab to amend · ctrl+e to explain',
+      'Bash(curl -sS https://example.com -o /dev/null)',
+      '  Waiting…',
+      '',
+      'Do you want to proceed?',
+      '1. Yes',
+      '2. Yes, and don' + String.fromCharCode(8217) + 't ask again for: curl *',
+      '3. No'
+    ])
+    const detected = detectClaudeApprovalPanel(withChrome)
+    expect(detected).not.toBeNull()
+    expect(detected?.command).toBe('Bash(curl -sS https://example.com -o /dev/null)')
+  })
 })
