@@ -139,4 +139,29 @@ Enter to select · Esc to cancel
     const detected = detectTerminalInputPrompt(real, 'claude')
     expect(detected).not.toBeNull()
   })
+
+  it('stays quiet while an agent is merely working', () => {
+    // Claude paints its cancel/amend hints for the whole duration of a turn,
+    // and replies routinely contain numbered lists. Together those used to
+    // read as a live choice prompt, so the island announced "needs input"
+    // over a session that was only thinking.
+    const working = [
+      'I will do three things:',
+      '  1. Read the config',
+      '  2. Patch the parser',
+      '  3. Run the tests',
+      '',
+      'Esc to cancel · Tab to amend · ctrl+e to explain'
+    ].join(NEWLINE)
+    expect(detectTerminalInputPrompt(working, 'claude')).toBeNull()
+  })
+
+  it('stays quiet after a finished turn', () => {
+    const done = [
+      'Done — exit code 0, no output.',
+      '',
+      'accept edits on (shift+tab to cycle)'
+    ].join(NEWLINE)
+    expect(detectTerminalInputPrompt(done, 'claude')).toBeNull()
+  })
 })

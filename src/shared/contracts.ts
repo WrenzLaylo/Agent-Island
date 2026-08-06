@@ -140,8 +140,6 @@ export interface IslandSettings {
   onboardingComplete: boolean
   /** Move the agent's terminal to the island's display on handoff. */
   moveTerminalToIsland: boolean
-  /** Shell shims that route `claude`/`codex`/`hermes` through the wrapper. */
-  shellShimsInstalled: boolean
 }
 
 export const DEFAULT_ISLAND_SETTINGS: IslandSettings = {
@@ -158,8 +156,7 @@ export const DEFAULT_ISLAND_SETTINGS: IslandSettings = {
   quietIdle: true,
   developerDiagnostics: false,
   onboardingComplete: false,
-  moveTerminalToIsland: true,
-  shellShimsInstalled: false
+  moveTerminalToIsland: true
 }
 
 export const AGENT_ORDER: AgentId[] = ['claude', 'codex', 'hermes']

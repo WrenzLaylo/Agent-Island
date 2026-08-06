@@ -356,13 +356,35 @@ export function removeShellShims(): ShimResult {
   return { ok: errors.length === 0, installed, errors }
 }
 
-/** Appends a one-line note so `island` is discoverable without the shims. */
+/**
+ * Whether the shims are on disk right now.
+ *
+ * Derived, never remembered. A stored boolean drifts out of step with reality
+ * the moment anything writes the profiles from outside the running app — the
+ * headless `--install-shims` did exactly that, and the Settings panel then
+ * offered to install shims that were already there.
+ */
+export function shimsInstalled(): boolean {
+  const marked = (path: string): boolean => {
+    try {
+      return existsSync(path) && readFileSync(path, 'utf8').includes(BEGIN)
+    } catch {
+      return false
+    }
+  }
+  if (marked(powerShellProfilePath()) || marked(pwshProfilePath()) || marked(bashProfilePath())) {
+    return true
+  }
+  return readAutoRun().includes(AUTORUN_SCRIPT)
+}
+
 export function shimStatus(): {
   wrapper: string
   electron: string
   wrapperExists: boolean
   launcher: string
   launcherOnPath: boolean
+  installed: boolean
 } {
   const launcher = join(launcherDir(), 'island.cmd')
   const dirs = (process.env.PATH ?? '').split(';').map((entry) => entry.trim().replace(/\+$/, ''))
@@ -371,6 +393,7 @@ export function shimStatus(): {
     electron: electronPath(),
     wrapperExists: existsSync(wrapperPath()),
     launcher,
-    launcherOnPath: dirs.includes(launcherDir().replace(/\+$/, ''))
+    launcherOnPath: dirs.includes(launcherDir().replace(/\+$/, '')),
+    installed: shimsInstalled()
   }
 }

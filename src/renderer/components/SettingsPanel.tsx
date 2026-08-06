@@ -30,30 +30,33 @@ export function SettingsPanel({ settings, onChange, onClose, onReturnHome }: Set
   const [shimBusy, setShimBusy] = useState(false)
   const [shimNote, setShimNote] = useState('')
   const [launcher, setLauncher] = useState('')
+  // Read from disk rather than from a remembered flag, which drifts whenever
+  // the shims are changed from outside this window.
+  const [shimsOn, setShimsOn] = useState<boolean | null>(null)
 
-  useEffect(() => {
-    void window.agentIsland.shimStatus().then((status) => {
+  const refreshShims = () =>
+    window.agentIsland.shimStatus().then((status) => {
       setLauncher(status.launcher)
+      setShimsOn(status.installed)
       if (!status.wrapperExists) setShimNote('Wrapper missing — rebuild Agent Island.')
     })
+
+  useEffect(() => {
+    void refreshShims()
   }, [])
 
   const toggleShims = async () => {
     setShimBusy(true)
-    const result = settings.shellShimsInstalled
+    const result = shimsOn
       ? await window.agentIsland.uninstallShims()
       : await window.agentIsland.installShims()
+    await refreshShims()
     setShimBusy(false)
-    if (result.ok) {
-      onChange({ shellShimsInstalled: !settings.shellShimsInstalled })
-      setShimNote(
-        settings.shellShimsInstalled
-          ? 'Removed. Open a new terminal for it to take effect.'
-          : 'Installed. Open a new terminal for it to take effect.'
-      )
-    } else {
-      setShimNote(result.errors[0] ?? 'Could not update the shell profiles.')
-    }
+    setShimNote(
+      result.ok
+        ? 'Open a new terminal for this to take effect.'
+        : result.errors[0] ?? 'Could not update the shell profiles.'
+    )
   }
 
   return (
@@ -146,9 +149,11 @@ export function SettingsPanel({ settings, onChange, onClose, onReturnHome }: Set
             <span>
               <strong>Shell integration</strong>
               <small>
-                {settings.shellShimsInstalled
-                  ? 'claude, codex and hermes run through Agent Island, and "island" is on your PATH. Shims fall back to the real command if anything goes wrong.'
-                  : `Until this is on, start a visible session by running the launcher directly: ${launcher || 'island.cmd'}`}
+                {shimsOn === null
+                  ? 'Checking…'
+                  : shimsOn
+                    ? 'On. Typing claude, codex or hermes runs the agent through Agent Island, so the pill can show its prompts. If anything goes wrong the real command runs instead.'
+                    : `Off. Agent Island cannot see sessions you start normally. Turn this on, or start one with ${launcher || 'island.cmd'} claude.`}
                 {shimNote ? ` ${shimNote}` : ''}
               </small>
             </span>
@@ -159,7 +164,7 @@ export function SettingsPanel({ settings, onChange, onClose, onReturnHome }: Set
               disabled={shimBusy}
               onClick={() => void toggleShims()}
             >
-              {settings.shellShimsInstalled ? 'Remove' : 'Install'}
+              {shimsOn ? 'Remove' : 'Install'}
             </button>
           </div>
         </section>

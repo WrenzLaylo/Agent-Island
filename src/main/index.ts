@@ -18,8 +18,7 @@ import {
   ensureLauncherScripts,
   installShellShims,
   removeShellShims,
-  shimStatus,
-  type ShimResult
+  shimStatus
 } from './agents/shell-shims'
 import { foregroundWindow, getWindowRect, raiseWindow } from '../node/win32-windows'
 import {
@@ -844,7 +843,6 @@ async function runShimCommand(command: string): Promise<void> {
     process.stdout.write(`${JSON.stringify(status, null, 2)}\n`)
   } else {
     const result = command === '--install-shims' ? installShellShims() : removeShellShims()
-    updateSettings({ shellShimsInstalled: command === '--install-shims' && result.ok })
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
   }
   app.exit(0)

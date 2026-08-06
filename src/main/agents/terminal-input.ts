@@ -31,8 +31,21 @@ const PLAN_RE =
 const AUTH_RE =
   /\b(sign in|log in|authenticate|authentication required|open the browser to continue|enter (?:the )?(?:code|token|password)|paste (?:the )?(?:code|token))\b/i
 
+/*
+ * Footers that mean "a choice is waiting for you right now".
+ *
+ * A bare "esc to cancel" used to be in here, and it is the reason the island
+ * announced input was needed while an agent was simply working: Claude Code
+ * paints "Esc to cancel . Tab to amend . ctrl+e to explain" in its status area
+ * for the whole duration of a turn. That made `hasActiveFooter` permanently
+ * true, so any numbered list in an ordinary reply — and replies are full of
+ * them — looked like a live choice prompt.
+ *
+ * Every alternative below has to be something a terminal only prints when it
+ * is actually blocked on the user.
+ */
 const FOOTER_RE =
-  /(press enter to confirm or esc to cancel|enter to select|return to select|use (?:the )?(?:arrow keys|up\/down|↑|↓)|esc to cancel|type here to tell|type your response|write your answer|choose an option|select an option|press [0-9](?:\/[0-9])?)/i
+  /(press enter to confirm|enter to confirm or esc to cancel|enter to select|return to select|use (?:the )?(?:arrow keys|up\/down|↑|↓) to select|type here to tell|type your response|write your answer|choose an option|select an option)/i
 
 const OPTION_RE = /^\s*[›>❯•]?\s*(?:\[(\d+)\]|(\d+)[.)])\s+(.+?)\s*$/
 const QUESTION_RE = /\?\s*$/

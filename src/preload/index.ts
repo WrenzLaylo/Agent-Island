@@ -44,6 +44,7 @@ export interface IslandApi {
     wrapperExists: boolean
     launcher: string
     launcherOnPath: boolean
+    installed: boolean
   }>
   onApproval: (handler: (request: unknown) => void) => () => void
   onApprovalCleared: (handler: (request: unknown) => void) => () => void

@@ -41,7 +41,7 @@ function sizeForPresentation(
   if (panel === 'settings') return { width: 440, height: 600 }
   if (panel === 'onboarding') return { width: 400, height: 380 }
   if (panel === 'handoff') return { width: 392, height: 196 }
-  if (mode === 'collapsed' && docked) return quietIdle ? { width: 36, height: 36 } : { width: 48, height: 48 }
+  if (mode === 'collapsed' && docked) return quietIdle ? { width: 44, height: 44 } : { width: 56, height: 56 }
 
   switch (mode) {
     case 'collapsed':
@@ -645,9 +645,7 @@ export function App() {
     // Shell integration is on by default for new installs: without it the
     // island cannot see a session at all. The shims fail open, and Settings has
     // a one-click Remove.
-    void window.agentIsland.installShims().then((result) => {
-      if (result.ok) updateAppSettings({ shellShimsInstalled: true })
-    })
+    void window.agentIsland.installShims()
   }
 
   const onMouseEnter = () => {
