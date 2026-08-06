@@ -29,9 +29,11 @@ export function SettingsPanel({ settings, onChange, onClose, onReturnHome }: Set
   const setDock = (value: string) => onChange({ preferredDockSide: value as PreferredDockSide })
   const [shimBusy, setShimBusy] = useState(false)
   const [shimNote, setShimNote] = useState('')
+  const [launcher, setLauncher] = useState('')
 
   useEffect(() => {
     void window.agentIsland.shimStatus().then((status) => {
+      setLauncher(status.launcher)
       if (!status.wrapperExists) setShimNote('Wrapper missing — rebuild Agent Island.')
     })
   }, [])
@@ -145,8 +147,8 @@ export function SettingsPanel({ settings, onChange, onClose, onReturnHome }: Set
               <strong>Shell integration</strong>
               <small>
                 {settings.shellShimsInstalled
-                  ? 'claude, codex and hermes run through Agent Island so their sessions are visible.'
-                  : 'Without this, run "island claude" to make a session visible. Shims fall back to the real command if anything goes wrong.'}
+                  ? 'claude, codex and hermes run through Agent Island, and "island" is on your PATH. Shims fall back to the real command if anything goes wrong.'
+                  : `Until this is on, start a visible session by running the launcher directly: ${launcher || 'island.cmd'}`}
                 {shimNote ? ` ${shimNote}` : ''}
               </small>
             </span>

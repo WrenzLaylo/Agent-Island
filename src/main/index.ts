@@ -14,7 +14,7 @@ import { discoverAgents } from './agents/discover'
 import type { AgentDiscoveryResult, DiscoveredAgent } from './agents/discover'
 import { SessionWatcher } from './agents/session-watcher'
 import { ApprovalBridgeWatcher, writeDecision } from './agents/approval-bridge'
-import { installShellShims, removeShellShims, shimStatus } from './agents/shell-shims'
+import { ensureLauncherScripts, installShellShims, removeShellShims, shimStatus } from './agents/shell-shims'
 import { getWindowRect, raiseWindow } from '../node/win32-windows'
 import {
   flushPersistedStore,
@@ -804,6 +804,13 @@ app.on('second-instance', () => {
 
 async function bootstrap(): Promise<void> {
   loadPersistedStore()
+  // Regenerate `island` / `island.cmd` on every launch so the command exists
+  // (and points at the current install) whether or not shell integration is on.
+  try {
+    ensureLauncherScripts()
+  } catch (error) {
+    console.warn('Could not write the island launcher scripts:', error)
+  }
   registerIpc()
   wireBridgeEvents()
   wireSessionEvents()

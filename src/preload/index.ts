@@ -34,7 +34,13 @@ export interface IslandApi {
   onSessionRemoved: (handler: (session: AgentSessionRecord) => void) => () => void
   installShims: () => Promise<ShimResult>
   uninstallShims: () => Promise<ShimResult>
-  shimStatus: () => Promise<{ wrapper: string; electron: string; wrapperExists: boolean }>
+  shimStatus: () => Promise<{
+    wrapper: string
+    electron: string
+    wrapperExists: boolean
+    launcher: string
+    launcherOnPath: boolean
+  }>
   onApproval: (handler: (request: unknown) => void) => () => void
   onApprovalCleared: (handler: (request: unknown) => void) => () => void
   listBridgeApprovals: () => Promise<unknown>

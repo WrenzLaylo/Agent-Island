@@ -36,6 +36,51 @@ function electronPath(): string {
   return process.execPath
 }
 
+/** Where the standalone `island` launchers live. */
+export function launcherDir(): string {
+  return join(app.getPath('userData'), 'bin')
+}
+
+/**
+ * Write `island.cmd` and `island` (bash) so the command exists whether or not
+ * the user has opted into shell integration.
+ *
+ * Without these, the only way to start an observed session was the shell
+ * functions — and the fallback advice ("run `island claude`") pointed at a
+ * command that did not exist anywhere, which made it circular. Regenerated on
+ * every launch so the paths follow the app if it moves.
+ */
+export function ensureLauncherScripts(): string {
+  const dir = launcherDir()
+  mkdirSync(dir, { recursive: true })
+  const exe = electronPath()
+  const wrapper = wrapperPath()
+
+  writeFileSync(
+    join(dir, 'island.cmd'),
+    [
+      '@echo off',
+      'setlocal',
+      'set "ELECTRON_RUN_AS_NODE=1"',
+      `"${exe}" "${wrapper}" %*`,
+      ''
+    ].join('\r\n'),
+    'utf8'
+  )
+
+  writeFileSync(
+    join(dir, 'island'),
+    [
+      '#!/bin/bash',
+      `ELECTRON_RUN_AS_NODE=1 "${toPosix(exe)}" "${toPosix(wrapper)}" "$@"`,
+      ''
+    ].join('\n'),
+    'utf8'
+  )
+
+  return dir
+}
+
 /**
  * PowerShell functions. `$env:ELECTRON_RUN_AS_NODE` makes the Electron binary
  * behave as plain node, which is required because node-pty is compiled against
@@ -44,7 +89,12 @@ function electronPath(): string {
 function powerShellBlock(): string {
   const exe = electronPath().replace(/'/g, "''")
   const wrapper = wrapperPath().replace(/'/g, "''")
-  const lines = [BEGIN, "# Remove this block to uninstall. Agent Island rewrites it on demand."]
+  const bin = launcherDir().replace(/'/g, "''")
+  const lines = [
+    BEGIN,
+    '# Remove this block to uninstall. Agent Island rewrites it on demand.',
+    `if (Test-Path '${bin}') { $env:PATH = '${bin}' + [IO.Path]::PathSeparator + $env:PATH }`
+  ]
   for (const agent of ['claude', 'codex', 'hermes']) {
     lines.push(
       `function ${agent} {`,
@@ -71,7 +121,12 @@ function powerShellBlock(): string {
 function bashBlock(): string {
   const exe = toPosix(electronPath())
   const wrapper = toPosix(wrapperPath())
-  const lines = [BEGIN, '# Remove this block to uninstall.']
+  const bin = toPosix(launcherDir())
+  const lines = [
+    BEGIN,
+    '# Remove this block to uninstall.',
+    `[ -d "${bin}" ] && case ":$PATH:" in *":${bin}:"*) ;; *) PATH="${bin}:$PATH" ;; esac`
+  ]
   for (const agent of ['claude', 'codex', 'hermes']) {
     lines.push(
       `${agent}() {`,
@@ -172,10 +227,20 @@ export function removeShellShims(): ShimResult {
 }
 
 /** Appends a one-line note so `island` is discoverable without the shims. */
-export function shimStatus(): { wrapper: string; electron: string; wrapperExists: boolean } {
+export function shimStatus(): {
+  wrapper: string
+  electron: string
+  wrapperExists: boolean
+  launcher: string
+  launcherOnPath: boolean
+} {
+  const launcher = join(launcherDir(), 'island.cmd')
+  const dirs = (process.env.PATH ?? '').split(';').map((entry) => entry.trim().replace(/\+$/, ''))
   return {
     wrapper: wrapperPath(),
     electron: electronPath(),
-    wrapperExists: existsSync(wrapperPath())
+    wrapperExists: existsSync(wrapperPath()),
+    launcher,
+    launcherOnPath: dirs.includes(launcherDir().replace(/\+$/, ''))
   }
 }
