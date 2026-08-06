@@ -15,9 +15,9 @@ export { createApprovalTrackerState }
  *
  * Unlike Hermes and Codex, Claude does not print a fixed banner sentence. The
  * panel is identified by its *shape*: a "Do you want to …?" question followed
- * immediately by a numbered choice list whose first entry is "Yes" and whose
- * last is "No, and tell Claude what to do differently". That trio is specific
- * enough to be safe and is stable across the bash, edit and web-fetch variants.
+ * immediately by a numbered choice list containing both a bare "Yes" and a
+ * "No". Requiring both poles is what keeps an ordinary numbered list in prose
+ * from being mistaken for a permission request.
  *
  * Answering is by digit, which is what the panel's own numbering advertises —
  * deliberately not arrow keys, since the highlighted row depends on state we
@@ -50,7 +50,18 @@ const YES_RE = /^Yes$/i
 const YES_SESSION_RE = /^Yes,\s*(?:allow all\b.*\bsession|.*\bfor (?:the rest of )?this session)/i
 /** Persistent: "don't ask again for X commands in <dir>". */
 const YES_ALWAYS_RE = /^Yes,\s*and\s+don['’]t ask again/i
-const NO_RE = /^No,\s*and tell Claude what to do differently/i
+/*
+ * The deny option is plain "No" in current Claude Code — captured live:
+ *
+ *   Do you want to proceed?
+ *   1. Yes
+ *   2. Yes, and don't ask again for: curl *
+ *   3. No
+ *
+ * Older and other variants read "No, and tell Claude what to do differently",
+ * so match any choice that starts with "No" rather than one exact sentence.
+ */
+const NO_RE = /^No\b/i
 
 const EDIT_QUESTION_RE = /\b(edit|create|write|update|apply .*changes?) \b/i
 const COMMAND_QUESTION_RE = /\bproceed\b|\brun\b/i

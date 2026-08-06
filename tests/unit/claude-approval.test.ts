@@ -141,4 +141,25 @@ describe('claude approval detection', () => {
     expect(resolveClaudeResponseKeys(raised.state, 'always').ok).toBe(false)
     expect(resolveClaudeResponseKeys(raised.state, 'session')).toEqual({ ok: true, keys: '2' })
   })
+
+  it("detects the real panel captured from Claude Code 2.1.223", () => {
+    // Captured live, not reconstructed. Note the deny option is a bare "No",
+    // and the TUI repeats the highlighted row on redraw.
+    const captured = panel([
+      "Bash command",
+      "",
+      "  curl -sS https://example.com -o /dev/null",
+      "",
+      "Do you want to proceed?",
+      "1. Yes",
+      "2. Yes, and don" + String.fromCharCode(8217) + "t ask again for: curl *",
+      "3. No",
+      "1. Yes"
+    ])
+    const detected = detectClaudeApprovalPanel(captured)
+    expect(detected).not.toBeNull()
+    expect(detected?.kind).toBe("claude-command")
+    expect(detected?.choices.map((choice) => choice.key)).toEqual(["once", "always", "deny"])
+    expect(detected?.responseKeys).toEqual({ once: "1", always: "2", deny: "3" })
+  })
 })
