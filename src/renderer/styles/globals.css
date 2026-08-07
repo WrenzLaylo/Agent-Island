@@ -237,6 +237,33 @@ select:focus-visible,
 .agent-mark-codex .agent-glyph { color: #6fc79b; }
 .agent-mark-hermes .agent-glyph { color: #a794f0; }
 
+/*
+ * Official marks.
+ *
+ * Sized off the tile rather than a fixed px so one rule covers all three
+ * scales (28 / 26 / 20px). 62% leaves the mark optically inset instead of
+ * crowding the tile edge, which a full-bleed logo does at 20px.
+ */
+.agent-logo {
+  display: inline-flex;
+  width: 62%;
+  height: 62%;
+  align-items: center;
+  justify-content: center;
+}
+
+.agent-logo svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* Claude's file carries Anthropic's own #D97757, so it is left alone. OpenAI's
+   mark is monochrome by design; currentColor gives it the agent colour that
+   the letter glyph used to carry. */
+.agent-mark-codex .agent-logo { color: #6fc79b; }
+.agent-mark-hermes .agent-logo { color: #a794f0; }
+
 .agent-glyph {
   font-size: var(--fs-xs);
   font-weight: 600;
