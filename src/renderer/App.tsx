@@ -364,6 +364,29 @@ export function App() {
 
     const enqueueApproval = (request: ApprovalRequest, playSound = true, mayExpand = true) => {
       if (!request?.id || !request.agentId) return
+      /*
+       * One live prompt per session, always.
+       *
+       * A wrapper keeps a single prompt file per session, so a new request
+       * from a session means the previous one is gone — whatever order the
+       * watcher happened to emit its events in. Enforcing that here stops
+       * stale copies of the same panel stacking up in the queue, where only
+       * the newest could actually be answered and the rest were dead cards
+       * the user had to click through first.
+       */
+      if (request.sessionId) {
+        for (const requestId of stateRef.current.approvalQueue) {
+          const queued = stateRef.current.approvals[requestId]
+          if (!queued || queued.id === request.id) continue
+          if (queued.sessionId !== request.sessionId) continue
+          dispatch({
+            type: 'INVALIDATE_APPROVAL',
+            requestId,
+            message: 'That request was replaced by a newer one.',
+            kind: 'cancelled'
+          })
+        }
+      }
       const autoExpand = mayExpand && settingsRef.current.autoExpandApprovals
       if (autoExpand) setPanel(null)
       setAttentionNonce((value) => value + 1)

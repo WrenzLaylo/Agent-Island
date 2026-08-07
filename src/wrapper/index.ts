@@ -37,6 +37,7 @@ import {
   type TerminalInputTrackerState
 } from '../main/agents/terminal-input'
 import { normalizeTerminalText } from '../shared/ansi'
+import { answersLivePrompt } from '../shared/local-answer'
 import type { AgentId, ApprovalDecision } from '../shared/contracts'
 import {
   SESSION_HEARTBEAT_MS,
@@ -67,6 +68,28 @@ const DECISION_POLL_MS = 200
  * does.
  */
 const IDLE_AFTER_MS = 2500
+
+/**
+ * How long output must go quiet before the panel detector runs.
+ *
+ * A TUI repaint arrives as several chunks. Scanning on every chunk means
+ * regularly fingerprinting a half-drawn panel, and a truncated choice label is
+ * a different fingerprint — so the same request was raised again, and again,
+ * landing in the island as two or three separate cards. Only the newest could
+ * actually be answered (the wrapper honours a decision only for the live
+ * prompt id), which is why answering appeared to take several attempts before
+ * anything happened in the terminal.
+ *
+ * Waiting for a brief lull means the detector sees a complete frame.
+ */
+const SCAN_QUIET_MS = 90
+
+/**
+ * Upper bound on that wait. An agent streaming output continuously would
+ * otherwise never fall quiet, and a panel printed in the middle of the stream
+ * would never be detected at all.
+ */
+const SCAN_MAX_DELAY_MS = 400
 
 /**
  * Set this terminal's title.
@@ -497,12 +520,35 @@ async function main(): Promise<void> {
     if (inputUpdate.raised) publishHandoff(inputUpdate.raised)
   }
 
+  /*
+   * Debounced scan: run once output has been quiet for SCAN_QUIET_MS, but
+   * never later than SCAN_MAX_DELAY_MS after the first chunk of a burst.
+   */
+  let scanTimer: NodeJS.Timeout | null = null
+  let scanDeadline = 0
+  const scheduleScan = () => {
+    const now = Date.now()
+    if (scanTimer) {
+      // Already inside a burst. Keep pushing the quiet window out, unless that
+      // would take us past the deadline for this burst.
+      if (now + SCAN_QUIET_MS > scanDeadline) return
+      clearTimeout(scanTimer)
+    } else {
+      scanDeadline = now + SCAN_MAX_DELAY_MS
+    }
+    scanTimer = setTimeout(() => {
+      scanTimer = null
+      scan()
+    }, SCAN_QUIET_MS)
+    scanTimer.unref?.()
+  }
+
   term.onData((data) => {
     lastOutputAt = Date.now()
     publishBusy(true)
     process.stdout.write(data)
     replay = (replay + data).slice(-MAX_REPLAY)
-    scan()
+    scheduleScan()
   })
 
   // Answers arrive as files so the island can restart without losing them.
@@ -616,8 +662,32 @@ async function main(): Promise<void> {
   }
   process.stdin.resume()
   process.stdin.on('data', (chunk: Buffer) => {
+    const text = chunk.toString('utf8')
+    /*
+     * The user answered in the terminal rather than in the island.
+     *
+     * Output alone cannot tell us this quickly: a panel counts as live until
+     * enough output follows it, and an agent that prints a short result after
+     * being answered leaves the island showing a card for a settled request.
+     * Keystrokes are the direct signal — see answersLivePrompt for why only a
+     * real option digit or a submit counts.
+     *
+     * The answered fingerprint is retained exactly as it is when the island
+     * answers, so the detector does not raise the same panel straight back.
+     */
+    if (livePromptId && approval.pending) {
+      const offered = approval.pending.options?.map((option) => option.index) ?? []
+      if (answersLivePrompt(text, offered)) {
+        approval = {
+          pending: null,
+          lastFingerprint: approval.pending.fingerprint ?? null,
+          responseKeys: null
+        }
+        clearPrompt()
+      }
+    }
     try {
-      term.write(chunk.toString('utf8'))
+      term.write(text)
     } catch {
       // ignore writes to a dead pty
     }
