@@ -71,8 +71,8 @@ export interface SessionPromptRecord {
   fingerprint: string
   /** Only meaningful for kind === 'approval'. */
   choices?: Array<'once' | 'session' | 'always' | 'deny'>
-  /** Numbered options verbatim. Meaningful for kind === 'choice'. */
-  options?: Array<{ index: number; label: string }>
+  /** Numbered options verbatim, each with the keystrokes that select it. */
+  options?: Array<{ index: number; label: string; keys?: string }>
   /**
    * Classified decisions with the agent's own wording, so the island can show
    * exactly what the terminal offered instead of paraphrasing it.
@@ -223,7 +223,7 @@ export function parsePromptRecord(raw: string): SessionPromptRecord | null {
         : undefined,
       options: Array.isArray(value.options)
         ? value.options.filter(
-            (option): option is { index: number; label: string } =>
+            (option): option is { index: number; label: string; keys?: string } =>
               Boolean(option) &&
               typeof (option as { index?: unknown }).index === 'number' &&
               Number.isFinite((option as { index: number }).index) &&

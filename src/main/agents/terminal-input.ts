@@ -99,8 +99,26 @@ export function detectTerminalInputPrompt(rawOutput: string, agentId: AgentId): 
   const recentLines = lines.slice(-48)
   const recentText = recentLines.join('\n')
   const footerIndex = recentText.search(FOOTER_RE)
-  const planMatch = PLAN_RE.test(recentText)
-  const authMatch = AUTH_RE.test(recentText)
+  /*
+   * Where a phrase appears matters, not merely that it appears.
+   *
+   * These were tested against the whole 48-line window, so a plan phrase in
+   * ordinary prose plus an unrelated numbered list elsewhere on screen were
+   * between them enough to raise a prompt. Quoting the wording sufficed: an
+   * agent explaining "if it asks 'Would you like to proceed?'" while a menu
+   * happened to be rendered below produced a card whose detail was a fragment
+   * of that sentence. A real prompt states its question and renders its
+   * choices together, so the phrase must sit in the same block as the thing
+   * the user can act on. Resolved below, once `options` is known.
+   */
+  const lastLineMatching = (re: RegExp): number => {
+    for (let index = recentLines.length - 1; index >= 0; index -= 1) {
+      if (re.test(recentLines[index])) return index
+    }
+    return -1
+  }
+  const planLine = lastLineMatching(PLAN_RE)
+  const authLine = lastLineMatching(AUTH_RE)
 
   const options = recentLines
     .map((line, index) => {
@@ -120,10 +138,30 @@ export function detectTerminalInputPrompt(rawOutput: string, agentId: AgentId): 
     }
   }
   const hasTypedInputCue = /type here|type your response|write your answer|enter (?:the )?(?:code|token|password)/i.test(recentText)
+  const hasActiveFooter = footerIndex >= 0 && recentText.length - footerIndex < 900
+
+  /**
+   * How far above the actionable part a prompt's own wording may sit.
+   *
+   * A panel puts its question immediately above its choices — one line, or two
+   * across a blank. Prose that merely mentions the same words carries on for a
+   * sentence or two first, which is the whole difference between the two.
+   */
+  const BLOCK_LINES = 2
+  const firstOptionLine = options.length ? options[0].index : -1
+  const nearActionable = (line: number): boolean => {
+    if (line < 0) return false
+    const gap = firstOptionLine - line
+    if (firstOptionLine >= 0 && gap >= 0 && gap <= BLOCK_LINES) return true
+    // A footer with no option list still anchors a prompt, but only when the
+    // phrase sits in the tail of the window rather than back in scrollback.
+    return hasActiveFooter && recentLines.length - line <= BLOCK_LINES * 2
+  }
+  const planMatch = nearActionable(planLine)
+  const authMatch = nearActionable(authLine)
   // Known permission panels are handled by dedicated adapters. An older
   // permission panel in scrollback must not block a newer plan/auth prompt.
   if (EXPLICIT_APPROVAL_RE.test(recentText) && !planMatch && !authMatch && !hasTypedInputCue) return null
-  const hasActiveFooter = footerIndex >= 0 && recentText.length - footerIndex < 900
   const hasChoicePrompt = options.length >= 2 && (hasActiveFooter || planMatch)
   const hasQuestionPrompt = lastQuestionIndex >= 0 && hasTypedInputCue
 

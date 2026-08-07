@@ -47,6 +47,15 @@ export type ApprovalDecision = 'once' | 'session' | 'always' | 'deny'
 export interface PromptOption {
   index: number
   label: string
+  /**
+   * Exact keystrokes that select this option.
+   *
+   * Not derivable from the index: Claude takes a bare digit, Hermes wants the
+   * digit followed by Enter, and Codex uses `y`/`p`/Esc shortcuts for some
+   * rows. Sending a bare digit to Codex selects nothing at all, so the agent
+   * that parsed the panel is the only thing that can say how to answer it.
+   */
+  keys?: string
 }
 
 /**
