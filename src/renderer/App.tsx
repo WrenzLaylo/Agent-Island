@@ -823,7 +823,15 @@ export function App() {
       const result = await api.answerSessionPrompt({
         sessionId: approval.sessionId,
         promptId: approval.id,
-        optionIndex: index
+        optionIndex: index,
+        /*
+         * Sent alongside the digit purely for compatibility. A wrapper older
+         * than the optionIndex protocol reads only `choice`; without this it
+         * resolves no keystroke, and the approval appears to do nothing in the
+         * terminal. Both fields are derived from the same detection, so they
+         * cannot disagree — a newer wrapper prefers the digit and ignores this.
+         */
+        ...(decision ? { decision } : {})
       })
       if (!result.ok) {
         dispatch({ type: 'SET_ERROR', message: result.error ?? 'The agent no longer accepts this decision.' })

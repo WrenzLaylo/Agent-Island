@@ -568,16 +568,24 @@ async function handoffToTerminal(
     }
   }
 
-  // Ask the session to mark its own tab, so the right *tab* comes forward and
-  // not merely the right window. Best effort: terminals without tabs, and any
-  // wrapper too old to answer, just fall through to raising the window.
-  await focusSessionTab(session)
+  /*
+   * Order matters more than total work here.
+   *
+   * Every Win32 and UI Automation call is a separate PowerShell process that
+   * compiles inline C# or loads the automation assemblies — roughly 0.9s each,
+   * measured. Tab focus additionally waits for the wrapper to paint its
+   * marker. Doing all of that *before* the raise meant the window the user
+   * asked for appeared last, 3-5 seconds after the click.
+   *
+   * The raise now goes first, so the terminal comes forward in about the time
+   * of one call. Marking the tab is started beforehand but not awaited: the
+   * marker only has to be painted by the time the UIA lookup runs, and the
+   * raise itself covers that delay for free.
+   */
+  const marker = beginTabMarker(session)
 
   const area = islandDisplay().workArea
-  // Only relocate when the terminal is on a different display, and only when
-  // the user has not opted out of having their layout rearranged.
-  const shouldMove =
-    getSettings().moveTerminalToIsland && !(await windowIsOnDisplay(session.hwnd, area))
+  const shouldMove = getSettings().moveTerminalToIsland && !(await windowIsOnDisplay(session.hwnd, area))
 
   const outcome = await raiseWindow({
     hwnd: session.hwnd,
@@ -585,19 +593,37 @@ async function handoffToTerminal(
   })
 
   if (outcome === 'gone') {
+    await marker.cancel()
     return { ok: false, error: 'That terminal has been closed.' }
   }
   if (outcome === 'error') {
+    await marker.cancel()
     return { ok: false, error: 'The terminal window could not be raised.' }
   }
+
+  // The window is already up, so the caller is not kept waiting on the tab.
+  void marker.focus()
   return { ok: true }
 }
 
-/** How long to give the wrapper to paint the marker before looking for it. */
-const FOCUS_MARKER_WAIT_MS = 450
+/**
+ * Ask the session to paint a marker in its tab title, so the right *tab* comes
+ * forward and not merely the right window.
+ *
+ * Split into request and lookup so the caller can raise the window in between.
+ * The wrapper polls for the request, and the raise takes long enough on its
+ * own that the marker is painted by the time `focus()` runs — the fixed wait
+ * this used to need is now covered by work that had to happen anyway.
+ */
+interface TabMarker {
+  focus: () => Promise<void>
+  cancel: () => Promise<void>
+}
 
-async function focusSessionTab(session: AgentSessionRecord): Promise<void> {
-  if (session.hwnd == null || session.terminalKind !== 'windows-terminal') return
+function beginTabMarker(session: AgentSessionRecord): TabMarker {
+  const noop: TabMarker = { focus: async () => {}, cancel: async () => {} }
+  if (session.hwnd == null || session.terminalKind !== 'windows-terminal') return noop
+
   const marker = `agent-island-focus-${randomUUID()}`
   const requestPath = join(focusDir(), `${session.id}.json`)
   try {
@@ -607,17 +633,32 @@ async function focusSessionTab(session: AgentSessionRecord): Promise<void> {
       JSON.stringify({ sessionId: session.id, marker, requestedAt: Date.now() }, null, 2),
       'utf8'
     )
-    await new Promise((resolve) => setTimeout(resolve, FOCUS_MARKER_WAIT_MS))
-    await focusTabByTitle(session.hwnd, marker)
   } catch (error) {
-    console.warn('Could not focus the session tab:', error)
-  } finally {
-    // Removing the request is what tells the wrapper to restore its title.
+    console.warn('Could not request a tab marker:', error)
+    return noop
+  }
+
+  // Removing the request is what tells the wrapper to restore its title, so it
+  // has to happen on every exit path.
+  const clear = async () => {
     try {
       rmSync(requestPath, { force: true })
     } catch {
       // ignore
     }
+  }
+
+  return {
+    focus: async () => {
+      try {
+        if (session.hwnd != null) await focusTabByTitle(session.hwnd, marker)
+      } catch (error) {
+        console.warn('Could not focus the session tab:', error)
+      } finally {
+        await clear()
+      }
+    },
+    cancel: clear
   }
 }
 
@@ -625,6 +666,11 @@ async function windowIsOnDisplay(
   hwnd: number,
   area: { x: number; y: number; width: number; height: number }
 ): Promise<boolean> {
+  // With a single display the answer cannot be anything but yes, and asking
+  // costs a PowerShell process — about 0.9s, measured — on the click path of
+  // every handoff for the great majority of machines.
+  if (screen.getAllDisplays().length <= 1) return true
+
   const rect = await getWindowRect(hwnd)
   if (!rect) return false
   const cx = rect.x + rect.width / 2
@@ -765,14 +811,23 @@ function registerIpc(): void {
       ) {
         return { ok: false, error: 'Invalid decision' }
       }
-      // Exactly one of the three answer forms must be present. Accepting more
-      // than one would leave the wrapper to pick, and it picks by precedence,
-      // not by what the user meant.
       const hasChoice = isApprovalDecision(request.decision)
       const hasIndex =
         typeof request.optionIndex === 'number' && Number.isFinite(request.optionIndex)
       const hasText = typeof request.text === 'string' && request.text.trim().length > 0
-      if (Number(hasChoice) + Number(hasIndex) + Number(hasText) !== 1) {
+      /*
+       * At least one answer form, and never a mix of kinds.
+       *
+       * `optionIndex` + `choice` together is the one permitted pair: both come
+       * from the same detection so they cannot disagree, and sending both is
+       * what lets a newer island still drive a wrapper that predates the
+       * optionIndex protocol. Free text with either of them would be a real
+       * ambiguity, and is refused.
+       */
+      if (!hasChoice && !hasIndex && !hasText) {
+        return { ok: false, error: 'Invalid decision' }
+      }
+      if (hasText && (hasChoice || hasIndex)) {
         return { ok: false, error: 'Invalid decision' }
       }
       const ok = sessionWatcher.writeDecision({

@@ -225,6 +225,17 @@ class SessionFiles {
     safeRemove(this.decisionPath)
   }
 
+  /**
+   * Consume an answer without retiring the prompt.
+   *
+   * Needed when a decision arrives that cannot be turned into keystrokes: the
+   * file has to go or the poll re-reads it forever, but the panel is still on
+   * screen waiting, so the island must keep showing it.
+   */
+  clearDecision(): void {
+    safeRemove(this.decisionPath)
+  }
+
   readDecision(): SessionDecisionRecord | null {
     try {
       if (!existsSync(this.decisionPath)) return null
@@ -590,12 +601,26 @@ async function main(): Promise<void> {
             : resolveClaudeResponseKeys(approval, decision.choice)
       if (keys.ok) payload = keys.keys
     }
-    if (payload) {
-      try {
-        term.write(payload)
-      } catch {
-        // The agent may have moved on; the next scan will resync.
-      }
+    if (!payload) {
+      /*
+       * Nothing could be sent — most often an island newer than this wrapper
+       * answering in a format it does not understand. Retiring the prompt here
+       * would dismiss the card and leave the panel sitting unanswered in the
+       * terminal, which reads as "I approved it and nothing happened". Drop
+       * only the decision, so the card stays up and the failure is visible.
+       */
+      process.stderr.write(
+        `island: could not act on that answer (prompt ${decision.promptId}). ` +
+          `Restart this session so the wrapper matches the island.
+`
+      )
+      files.clearDecision()
+      return
+    }
+    try {
+      term.write(payload)
+    } catch {
+      // The agent may have moved on; the next scan will resync.
     }
     approval = { pending: null, lastFingerprint: pending.fingerprint ?? null, responseKeys: null }
     clearPrompt()
