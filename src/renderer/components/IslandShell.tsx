@@ -44,6 +44,8 @@ interface IslandShellProps {
   onDecision: (decision: ApprovalDecision) => void
   onChoiceOption: (index: number) => void
   onChoiceText: (text: string) => void
+  /** Answer an approval by the agent's own digit; decision is advisory only. */
+  onApprovalOption: (index: number, decision: ApprovalDecision | null) => void
   onContinueInTerminal: (agentId: AgentId, sessionId?: string) => void
   onOpenTerminal: (agentId: AgentId, sessionId?: string) => void
   onDismissHandoff: () => void
@@ -211,6 +213,7 @@ export function IslandShell(props: IslandShellProps) {
     onDecision,
     onChoiceOption,
     onChoiceText,
+    onApprovalOption,
     onContinueInTerminal,
     onOpenTerminal,
     onDismissHandoff,
@@ -431,7 +434,13 @@ export function IslandShell(props: IslandShellProps) {
                 onOpenTerminal={() => onOpenTerminal(approval.agentId, approval.sessionId)}
               />
             ) : (
-              <ApprovalCard approval={approval} approveEnabled={approveEnabled} disabled={isMorphing} onDecision={onDecision} />
+              <ApprovalCard
+                approval={approval}
+                approveEnabled={approveEnabled}
+                disabled={isMorphing}
+                onDecision={onDecision}
+                onOption={onApprovalOption}
+              />
             )}
           </motion.div>
         ) : state.mode === 'success' || state.mode === 'error' ? (

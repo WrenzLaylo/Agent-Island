@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { verbatimOptions } from '../../src/shared/approval-options'
+import { approvalRows, isDenyRow } from '../../src/shared/approval-options'
 import type { ApprovalRequest } from '../../src/shared/contracts'
 
 const APOS = String.fromCharCode(39)
@@ -23,16 +23,41 @@ function makeRequest(overrides: Partial<ApprovalRequest> = {}): ApprovalRequest 
   }
 }
 
-/** The shape Claude actually prints for a command approval. */
-const CLAUDE_CHOICES = [
-  { decision: 'once' as const, index: 1, label: 'Yes' },
-  { decision: 'always' as const, index: 2, label: 'Yes, and don' + APOS + 't ask again for: curl *' },
-  { decision: 'deny' as const, index: 3, label: 'No' }
-]
+/** A panel where every option happens to classify. */
+const CLASSIFIED = {
+  options: [
+    { index: 1, label: 'Yes' },
+    { index: 2, label: 'Yes, and don' + APOS + 't ask again for: curl *' },
+    { index: 3, label: 'No' }
+  ],
+  choiceOptions: [
+    { decision: 'once' as const, index: 1, label: 'Yes' },
+    { decision: 'always' as const, index: 2, label: 'Yes, and don' + APOS + 't ask again for: curl *' },
+    { decision: 'deny' as const, index: 3, label: 'No' }
+  ]
+}
 
-describe('verbatimOptions', () => {
-  it('keeps the agent wording exactly, including the scope of a permanent grant', () => {
-    const rows = verbatimOptions(makeRequest({ choiceOptions: CLAUDE_CHOICES }))
+/**
+ * The case that motivated this: option 2 is a real, selectable answer that no
+ * permission vocabulary describes. It used to vanish from the card entirely.
+ */
+const WITH_UNCLASSIFIABLE = {
+  options: [
+    { index: 1, label: 'Yes' },
+    { index: 2, label: 'Yes, but let me edit the command first' },
+    { index: 3, label: 'Yes, and don' + APOS + 't ask again for: npm *' },
+    { index: 4, label: 'No' }
+  ],
+  choiceOptions: [
+    { decision: 'once' as const, index: 1, label: 'Yes' },
+    { decision: 'always' as const, index: 3, label: 'Yes, and don' + APOS + 't ask again for: npm *' },
+    { decision: 'deny' as const, index: 4, label: 'No' }
+  ]
+}
+
+describe('approvalRows', () => {
+  it('keeps the agent wording exactly, including a permanent grant scope', () => {
+    const rows = approvalRows(makeRequest(CLASSIFIED))
     expect(rows.map((row) => row.label)).toEqual([
       'Yes',
       'Yes, and don' + APOS + 't ask again for: curl *',
@@ -40,11 +65,36 @@ describe('verbatimOptions', () => {
     ])
   })
 
+  it('renders an option the classifier does not recognise', () => {
+    const rows = approvalRows(makeRequest(WITH_UNCLASSIFIABLE))
+    expect(rows).toHaveLength(4)
+    expect(rows.map((row) => row.label)).toContain('Yes, but let me edit the command first')
+  })
+
+  it('leaves an unrecognised option unclassified rather than guessing', () => {
+    const rows = approvalRows(makeRequest(WITH_UNCLASSIFIABLE))
+    const edit = rows.find((row) => row.index === 2)
+    expect(edit?.decision).toBeNull()
+  })
+
+  it('still attaches classifications to the options that have them', () => {
+    const rows = approvalRows(makeRequest(WITH_UNCLASSIFIABLE))
+    expect(rows.map((row) => [row.index, row.decision])).toEqual([
+      [1, 'once'],
+      [2, null],
+      [3, 'always'],
+      [4, 'deny']
+    ])
+  })
+
   it('orders by the agent numbering, not by decision severity', () => {
-    // Deliberately supplied out of order: the terminal's numbering wins, so the
-    // row the user presses is the row they would have pressed in the terminal.
-    const rows = verbatimOptions(
+    const rows = approvalRows(
       makeRequest({
+        options: [
+          { index: 3, label: 'No' },
+          { index: 1, label: 'Yes' },
+          { index: 2, label: 'Yes, and always' }
+        ],
         choiceOptions: [
           { decision: 'deny', index: 3, label: 'No' },
           { decision: 'once', index: 1, label: 'Yes' },
@@ -55,42 +105,45 @@ describe('verbatimOptions', () => {
     expect(rows.map((row) => row.index)).toEqual([1, 2, 3])
   })
 
-  it('carries the digit that will actually be sent', () => {
-    const rows = verbatimOptions(makeRequest({ choiceOptions: CLAUDE_CHOICES }))
-    expect(rows.map((row) => ({ index: row.index, decision: row.decision }))).toEqual([
-      { index: 1, decision: 'once' },
-      { index: 2, decision: 'always' },
-      { index: 3, decision: 'deny' }
-    ])
+  it('falls back to nothing when the agent captured no options', () => {
+    // The card renders its own wording in this case; a partial list here would
+    // silently mix the two vocabularies.
+    expect(approvalRows(makeRequest())).toEqual([])
+    expect(approvalRows(makeRequest({ options: [] }))).toEqual([])
   })
 
-  it('drops options the request no longer offers', () => {
-    // `choices` is the authority on what may still be answered; a label alone
-    // must not resurrect a decision that was filtered out upstream.
-    const rows = verbatimOptions(
-      makeRequest({ choiceOptions: CLAUDE_CHOICES, choices: ['once', 'deny'] })
+  it('works with options but no classifications at all', () => {
+    const rows = approvalRows(
+      makeRequest({ options: [{ index: 1, label: 'Postgres' }, { index: 2, label: 'SQLite' }] })
     )
-    expect(rows.map((row) => row.decision)).toEqual(['once', 'deny'])
-  })
-
-  it('falls back to nothing when the agent captured no labels', () => {
-    // The caller renders its own wording in this case; returning a partial or
-    // invented list here would silently mix the two vocabularies.
-    expect(verbatimOptions(makeRequest())).toEqual([])
-    expect(verbatimOptions(makeRequest({ choiceOptions: [] }))).toEqual([])
-  })
-
-  it('keeps every captured option when the request lists no explicit choices', () => {
-    const rows = verbatimOptions(makeRequest({ choiceOptions: CLAUDE_CHOICES, choices: undefined }))
-    expect(rows).toHaveLength(3)
+    expect(rows.map((row) => row.decision)).toEqual([null, null])
+    expect(rows.map((row) => row.label)).toEqual(['Postgres', 'SQLite'])
   })
 
   it('does not mutate the request', () => {
-    const choiceOptions = [
-      { decision: 'deny' as const, index: 3, label: 'No' },
-      { decision: 'once' as const, index: 1, label: 'Yes' }
+    const options = [
+      { index: 3, label: 'No' },
+      { index: 1, label: 'Yes' }
     ]
-    verbatimOptions(makeRequest({ choiceOptions }))
-    expect(choiceOptions.map((option) => option.index)).toEqual([3, 1])
+    approvalRows(makeRequest({ options }))
+    expect(options.map((option) => option.index)).toEqual([3, 1])
+  })
+})
+
+describe('isDenyRow', () => {
+  it('recognises the refusal', () => {
+    expect(isDenyRow({ decision: 'deny' })).toBe(true)
+  })
+
+  it('treats an unclassified row as an approval, not a refusal', () => {
+    // Denials stay clickable when a request is no longer safe to approve.
+    // Assuming an unrecognised row is harmless would let it through that gate.
+    expect(isDenyRow({ decision: null })).toBe(false)
+  })
+
+  it('does not treat an allow as a refusal', () => {
+    expect(isDenyRow({ decision: 'once' })).toBe(false)
+    expect(isDenyRow({ decision: 'always' })).toBe(false)
+    expect(isDenyRow({ decision: 'session' })).toBe(false)
   })
 })

@@ -45,6 +45,16 @@ const CHOICE_ROW_H = 44
 const MAX_VISIBLE_CHOICE_ROWS = 4
 
 /**
+ * Approval-card geometry: summary row, command block and context above the
+ * option list. The card now renders one row per option the agent offered
+ * rather than a fixed set of four decisions, so the height follows that count.
+ * Past MAX_VISIBLE_APPROVAL_ROWS the list scrolls (see `.decision-list`).
+ */
+const APPROVAL_BASE_H = 292
+const APPROVAL_ROW_H = 56
+const MAX_VISIBLE_APPROVAL_ROWS = 5
+
+/**
  * Window size == visible size. There is no native mask and no frame inset any
  * more, so these are the literal pixels the user sees. Everything sits on a
  * 4px grid so the shell never lands on a half-pixel at fractional DPI.
@@ -89,9 +99,9 @@ function sizeForPresentation(
         const rows = Math.min(Math.max(approvalChoiceCount, 2), MAX_VISIBLE_CHOICE_ROWS)
         return { width: 440, height: CHOICE_BASE_H + rows * CHOICE_ROW_H }
       }
-      return {
-        width: 440,
-        height: approvalChoiceCount >= 4 ? 516 : approvalChoiceCount === 3 ? 460 : 404
+      {
+        const rows = Math.min(Math.max(approvalChoiceCount, 2), MAX_VISIBLE_APPROVAL_ROWS)
+        return { width: 440, height: APPROVAL_BASE_H + rows * APPROVAL_ROW_H }
       }
     default:
       return quietIdle ? { width: 116, height: 32 } : { width: 300, height: 52 }
@@ -258,9 +268,10 @@ export function App() {
       sizeForPresentation(
         state.mode,
         docked,
-        // A choice prompt is measured by its option count, an approval by its
-        // decision count.
-        (approval?.isPermission === false ? approval?.options?.length : approval?.choices?.length) ?? 2,
+        // Both card kinds are measured by the agent's own option count now;
+        // the classified decisions are only a fallback for requests that
+        // carried no option list.
+        approval?.options?.length ?? approval?.choices?.length ?? 2,
         panel,
         quietIdle,
         sessionRows.length,
@@ -771,6 +782,36 @@ export function App() {
     dispatch({ type: 'ANSWER_APPROVAL', requestId: approval.id, decision: 'once' })
   }
 
+  /**
+   * Answer an approval by the agent's own digit.
+   *
+   * Separate from `answerChoice` because an approval still has to clear
+   * `canApproveRequest` — a permission grant on a stale or dead request must
+   * not go through, and denying must stay possible when approving does not.
+   * The classification is passed only so the transient message and the guard
+   * describe the right thing; the digit is what gets sent.
+   */
+  const answerApprovalOption = async (index: number, decision: ApprovalDecision | null) => {
+    if (!approval || isMorphing) return
+    const isDeny = decision === 'deny'
+    if (!isDeny && !approveEnabled) return
+    const api = window.agentIsland
+    if (approval.sessionId) {
+      const result = await api.answerSessionPrompt({
+        sessionId: approval.sessionId,
+        promptId: approval.id,
+        optionIndex: index
+      })
+      if (!result.ok) {
+        dispatch({ type: 'SET_ERROR', message: result.error ?? 'The agent no longer accepts this decision.' })
+        return
+      }
+    }
+    // An unclassified option is still an answer; 'once' is the machine's
+    // neutral "answered and dismissed" and never claims a broader grant.
+    dispatch({ type: 'ANSWER_APPROVAL', requestId: approval.id, decision: decision ?? 'once' })
+  }
+
   const updateAppSettings = (patch: Partial<IslandSettings>) => {
     const optimistic = { ...settingsRef.current, ...patch }
     setSettings(optimistic)
@@ -985,6 +1026,7 @@ export function App() {
           onDecision={(decision) => void onDecision(decision)}
           onChoiceOption={(index) => void answerChoice({ optionIndex: index })}
           onChoiceText={(text) => void answerChoice({ text })}
+          onApprovalOption={(index, decision) => void answerApprovalOption(index, decision)}
           onContinueInTerminal={(agentId, sessionId) => void openTerminal(agentId, sessionId)}
           onOpenTerminal={(agentId, sessionId) => void openTerminal(agentId, sessionId)}
           onDismissHandoff={() => {

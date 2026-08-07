@@ -1,7 +1,7 @@
 import { motion } from 'framer-motion'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { APPROVAL_REARM_MS, approvalReArmed } from '@shared/approval-guard'
-import { verbatimOptions } from '@shared/approval-options'
+import { approvalRows, isDenyRow } from '@shared/approval-options'
 import {
   AGENT_LABELS,
   type ApprovalDecision,
@@ -14,6 +14,8 @@ interface ApprovalCardProps {
   approveEnabled: boolean
   disabled?: boolean
   onDecision: (decision: ApprovalDecision) => void
+  /** Answer by the agent's own digit; `decision` is advisory context only. */
+  onOption: (index: number, decision: ApprovalDecision | null) => void
 }
 
 function riskLabel(risk: ApprovalRequest['risk']): string {
@@ -85,15 +87,15 @@ function DecisionIcon({ choice }: { choice: ApprovalDecision }) {
   return <span aria-hidden="true">✓</span>
 }
 
-export function ApprovalCard({ approval, approveEnabled, disabled = false, onDecision }: ApprovalCardProps) {
-  const [confirmPermanent, setConfirmPermanent] = useState(false)
+export function ApprovalCard({ approval, approveEnabled, disabled = false, onDecision, onOption }: ApprovalCardProps) {
+  const [pendingPermanent, setPendingPermanent] = useState<{ index: number | null; decision: ApprovalDecision | null } | null>(null)
   /*
    * Prefer the agent's own wording and ordering. The fallback list exists for
    * requests that carry no captured labels — the Hermes IPC bridge, and any
    * wrapper older than this build — where inventing a phrase is the only
    * option left.
    */
-  const offered = useMemo(() => verbatimOptions(approval), [approval])
+  const offered = useMemo(() => approvalRows(approval), [approval])
   const choices = useMemo(
     () => CHOICE_ORDER.filter((choice) => (approval.choices?.length ? approval.choices : ['once', 'deny']).includes(choice)),
     [approval.choices]
@@ -101,22 +103,17 @@ export function ApprovalCard({ approval, approveEnabled, disabled = false, onDec
   const rows = useMemo(
     () =>
       offered.length
-        ? offered.map((option) => ({
-            decision: option.decision,
-            index: option.index as number | null,
-            label: option.label,
-            hint: ''
-          }))
+        ? offered.map((row) => ({ ...row, hint: '' }))
         : choices.map((choice) => ({
-            decision: choice,
-            index: null,
+            decision: choice as ApprovalDecision | null,
+            index: null as number | null,
             label: choiceLabel(choice, approval),
             hint: choiceHint(choice, approval)
           })),
     [offered, choices, approval]
   )
 
-  useEffect(() => setConfirmPermanent(false), [approval.id])
+  useEffect(() => setPendingPermanent(null), [approval.id])
 
   /**
    * Answering one approval promotes the next queued one into this same card,
@@ -135,15 +132,21 @@ export function ApprovalCard({ approval, approveEnabled, disabled = false, onDec
 
   const inert = disabled || !armed
 
-  const choose = (choice: ApprovalDecision) => {
+  /**
+   * `index` is present whenever the agent's own option list reached us, and is
+   * then the thing that gets sent — the classification is not consulted. The
+   * decision-only path is the fallback for requests carrying no option list.
+   */
+  const choose = (row: { index: number | null; decision: ApprovalDecision | null }) => {
     // The disabled attribute already covers pointer clicks; this also refuses
     // keyboard activation and anything that replays an event into the card.
     if (!approvalReArmed(shownAtRef.current, Date.now())) return
-    if (choice === 'always') {
-      setConfirmPermanent(true)
+    if (row.decision === 'always') {
+      setPendingPermanent(row)
       return
     }
-    onDecision(choice)
+    if (row.index != null) onOption(row.index, row.decision)
+    else if (row.decision) onDecision(row.decision)
   }
 
   return (
@@ -178,7 +181,7 @@ export function ApprovalCard({ approval, approveEnabled, disabled = false, onDec
         </div>
       ) : null}
 
-      {confirmPermanent ? (
+      {pendingPermanent ? (
         <motion.div
           className="permanent-confirmation"
           initial={{ opacity: 0, y: 6 }}
@@ -191,7 +194,7 @@ export function ApprovalCard({ approval, approveEnabled, disabled = false, onDec
               : 'This permission can apply in future sessions. Only confirm when you trust this command pattern.'}</small>
           </div>
           <div className="permanent-actions">
-            <button type="button" className="quiet-button" data-no-drag="true" onClick={() => setConfirmPermanent(false)}>
+            <button type="button" className="quiet-button" data-no-drag="true" onClick={() => setPendingPermanent(null)}>
               Cancel
             </button>
             <button
@@ -199,7 +202,11 @@ export function ApprovalCard({ approval, approveEnabled, disabled = false, onDec
               className="permanent-button"
               data-no-drag="true"
               disabled={!approveEnabled || inert}
-              onClick={() => onDecision('always')}
+              onClick={() =>
+                pendingPermanent.index != null
+                  ? onOption(pendingPermanent.index, 'always')
+                  : onDecision('always')
+              }
             >
               Confirm permanent access
             </button>
@@ -208,15 +215,16 @@ export function ApprovalCard({ approval, approveEnabled, disabled = false, onDec
       ) : (
         <div className={`decision-list choices-${rows.length}`}>
           {rows.map((row) => {
-            const isDeny = row.decision === 'deny'
+            // Unclassified rows are gated like approvals, never like denials.
+            const isDeny = isDenyRow(row)
             const buttonDisabled = inert || (!isDeny && !approveEnabled)
             return (
               <motion.button
                 key={`${row.decision}-${row.index ?? 'x'}`}
                 type="button"
-                className={`decision-button decision-${row.decision}`}
+                className={`decision-button decision-${row.decision ?? 'other'}`}
                 data-no-drag="true"
-                onClick={() => choose(row.decision)}
+                onClick={() => choose(row)}
                 disabled={buttonDisabled}
                 whileTap={!buttonDisabled ? { scale: 0.985 } : undefined}
               >
@@ -225,7 +233,7 @@ export function ApprovalCard({ approval, approveEnabled, disabled = false, onDec
                 {row.index != null ? (
                   <span className="decision-index">{row.index}</span>
                 ) : (
-                  <span className="decision-icon"><DecisionIcon choice={row.decision} /></span>
+                  <span className="decision-icon"><DecisionIcon choice={row.decision ?? 'once'} /></span>
                 )}
                 <span className="decision-copy">
                   <strong>{row.label}</strong>
