@@ -225,8 +225,9 @@ export function IslandShell(props: IslandShellProps) {
     onReturnHome
   } = props
 
-  // Past one session, "which agent" stops identifying anything actionable —
-  // two Claude sessions are one tab — so the panel addresses sessions instead.
+  // Past one session the panel also addresses sessions directly, since two
+  // Claude sessions collapse into one tab. The tabs stay regardless: they are
+  // the only way to reach an agent that has no session yet.
   const multiSession = sessionRows.length > 1
   // `isPermission === false` is set only by the detectors; anything older or
   // from another source stays an approval, so this cannot silently downgrade
@@ -490,11 +491,16 @@ export function IslandShell(props: IslandShellProps) {
             </div>
 
             {/* With one session or none, choosing an agent is still the job. */}
-            {multiSession ? (
-              <SessionList rows={sessionRows} onOpenSession={onOpenTerminal} />
-            ) : (
-              <AgentTabs agents={AGENT_ORDER.map((id) => state.agents[id])} activeAgentId={state.activeAgentId} onSelect={onSelectAgent} />
-            )}
+            {/*
+              The two controls answer different questions and neither replaces
+              the other. The rows act on sessions that exist; the tabs select
+              an agent, including one with no session at all — which is exactly
+              when you need them, to check whether Codex is available or to
+              open a terminal for it. Swapping the tabs out for the rows left
+              no way to reach an idle agent while two sessions were running.
+            */}
+            {multiSession ? <SessionList rows={sessionRows} onOpenSession={onOpenTerminal} /> : null}
+            <AgentTabs agents={AGENT_ORDER.map((id) => state.agents[id])} activeAgentId={state.activeAgentId} onSelect={onSelectAgent} />
           </motion.div>
         )}
       </AnimatePresence>

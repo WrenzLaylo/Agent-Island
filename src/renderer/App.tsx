@@ -38,6 +38,12 @@ const SESSION_ROW_GAP = 4
 const EXPANDED_BASE_H = 148
 /** Past this the list scrolls rather than growing the window further. */
 const MAX_VISIBLE_SESSION_ROWS = 4
+/**
+ * The agent switcher strip, which stays visible alongside the session list:
+ * 8px padding either side of a 28px control. Selecting an agent that has no
+ * session is something only the tabs can do.
+ */
+const AGENT_TABS_H = 44
 
 /** Choice-card geometry: header, question, text field and terminal link. */
 const CHOICE_BASE_H = 236
@@ -78,13 +84,16 @@ function sizeForPresentation(
       return quietIdle ? { width: 116, height: 32 } : { width: 300, height: 52 }
     case 'peek':
     case 'expanded':
-      // With 2+ sessions the agent tabs give way to one row per session, so
-      // the window has to grow to hold them. Beyond MAX_VISIBLE_SESSION_ROWS
-      // the list scrolls instead: an island tall enough for ten sessions stops
-      // being an island.
+      // With 2+ sessions a row per session appears *above* the agent tabs, so
+      // the window grows by the list plus the strip it did not replace. Beyond
+      // MAX_VISIBLE_SESSION_ROWS the list scrolls instead: an island tall
+      // enough for ten sessions stops being an island.
       if (sessionRowCount > 1) {
         const rows = Math.min(sessionRowCount, MAX_VISIBLE_SESSION_ROWS)
-        return { width: 400, height: EXPANDED_BASE_H + rows * SESSION_ROW_H + (rows - 1) * SESSION_ROW_GAP }
+        return {
+          width: 400,
+          height: EXPANDED_BASE_H + rows * SESSION_ROW_H + (rows - 1) * SESSION_ROW_GAP + AGENT_TABS_H
+        }
       }
       return { width: 400, height: 172 }
     case 'success':
