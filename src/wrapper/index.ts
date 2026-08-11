@@ -47,6 +47,8 @@ import {
 } from '../main/agents/terminal-input'
 import { normalizeTerminalText } from '../shared/ansi'
 import { answersLivePrompt, mayAnswerSomePrompt } from '../shared/local-answer'
+import { detectStalledPrompt } from '../shared/stalled-prompt'
+import { AGENT_LABELS } from '../shared/contracts'
 import type { AgentId, ApprovalDecision } from '../shared/contracts'
 import {
   SESSION_HEARTBEAT_MS,
@@ -77,6 +79,16 @@ const DECISION_POLL_MS = 200
  * does.
  */
 const IDLE_AFTER_MS = 2500
+
+/**
+ * How long a picker must sit untouched before the last-resort signal fires.
+ *
+ * Comfortably longer than IDLE_AFTER_MS: a real prompt waits indefinitely, so
+ * there is no hurry, and the delay is what keeps a mid-render frame from being
+ * mistaken for a stall. Nothing is lost by being slow here — this only ever
+ * speaks when every real detector has already stayed silent.
+ */
+const STALL_AFTER_MS = 6000
 
 /**
  * How long output must go quiet before the panel detector runs.
@@ -393,6 +405,8 @@ async function main(): Promise<void> {
   // or stops producing output, not on every chunk.
   let busy = false
   let lastOutputAt = 0
+  /** Stops one unread picker being reported on every poll while it sits there. */
+  let lastStallFingerprint: string | null = null
   const publishBusy = (next: boolean) => {
     if (busy === next) return
     busy = next
@@ -552,6 +566,31 @@ async function main(): Promise<void> {
     terminalInput = inputUpdate.state
     if (inputUpdate.cleared) clearPrompt()
     if (inputUpdate.raised) publishHandoff(inputUpdate.raised)
+
+    /*
+     * Last resort, and only when everything else has stayed silent.
+     *
+     * If an adapter or the terminal-input detector recognised anything, that
+     * is strictly better information and this must not second-guess it. What
+     * remains is the case with no safe reading: an agent waiting on a panel
+     * nobody parsed, which otherwise leaves the island perfectly calm while
+     * the terminal is blocked.
+     */
+    if (!livePromptId && !approval.pending && Date.now() - lastOutputAt > STALL_AFTER_MS) {
+      const stalled = detectStalledPrompt(text)
+      if (stalled && stalled.fingerprint !== lastStallFingerprint) {
+        lastStallFingerprint = stalled.fingerprint
+        publishHandoff({
+          id: `stall-${randomUUID()}`,
+          title: `${AGENT_LABELS[agentId]} may be waiting for you`,
+          // Deliberately hedged. Nothing here was understood, so claiming to
+          // know what is being asked would be a lie the user acts on.
+          detail: `Agent Island could not read this prompt. It looks like a choice with ${stalled.optionCount} options: ${stalled.preview}`,
+          expiresAt: Date.now() + 30 * 60_000,
+          fingerprint: stalled.fingerprint
+        })
+      }
+    }
   }
 
   /*
@@ -579,6 +618,7 @@ async function main(): Promise<void> {
 
   term.onData((data) => {
     lastOutputAt = Date.now()
+    lastStallFingerprint = null
     publishBusy(true)
     process.stdout.write(data)
     replay = (replay + data).slice(-MAX_REPLAY)
