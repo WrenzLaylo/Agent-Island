@@ -15,16 +15,31 @@ export interface DetectedHermesChoice {
   label: string
 }
 
+/**
+ * Verified against Hermes Agent v0.19.1 running `display.interface: cli` —
+ * its classic prompt-toolkit output, reported by Hermes from its own source.
+ *
+ * That scoping matters. The full-screen TUI may render this panel differently,
+ * and the failure would look identical to the one fixed in 4d54eae: no card,
+ * no handoff, the agent simply waiting. If approvals go quiet again, check the
+ * interface mode before suspecting the parser.
+ */
 export interface HermesApprovalDetection {
   kind: 'hermes-dangerous-command'
   title: string
   command: string
   description: string
   choices: DetectedHermesChoice[]
+  /**
+   * Every row, with the keystrokes that select it. `choices` drops anything
+   * unclassified — "Show full command" among them — so a card built from it
+   * alone would silently omit rows Hermes actually offered.
+   */
+  options: Array<{ index: number; label: string; keys: string }>
   fingerprint: string
   risk: RiskLevel
   riskReason: string
-  /** Keystrokes that select this choice (digit + Enter). */
+  /** Keystrokes that select this choice. A bare digit submits in v0.19.1. */
   responseKeys: Partial<Record<ApprovalDecision, string>>
 }
 
@@ -171,6 +186,14 @@ export function detectHermesApprovalPanel(rawOutput: string): HermesApprovalDete
     command,
     description,
     choices,
+    // Every row, not just the classified ones. "Show full command" expands the
+    // command without resolving the approval, so it must reach the card as a
+    // visible row rather than vanish — and must never be sent as an answer.
+    options: choices.map((choice) => ({
+      index: choice.index,
+      label: choice.label,
+      keys: `${choice.index}`
+    })),
     fingerprint,
     risk: risk.level,
     riskReason: risk.reason,
@@ -337,6 +360,8 @@ export function updateHermesApprovalTracker(input: {
     choices: detection.choices
       .filter((choice): choice is DetectedHermesChoice & { key: ApprovalDecision } => choice.key !== 'view')
       .map((choice) => choice.key),
+    options: detection.options,
+    isPermission: true,
     choiceOptions: detection.choices
       .filter((choice): choice is DetectedHermesChoice & { key: ApprovalDecision } => choice.key !== 'view')
       .map((choice) => ({ decision: choice.key, index: choice.index, label: choice.label }))

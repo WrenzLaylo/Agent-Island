@@ -235,3 +235,29 @@ describe('hermes panel kinds are kept apart', () => {
     expect(detection?.choices.map((c) => c.key)).toEqual(['once', 'deny'])
   })
 })
+
+describe('hermes rows reach the card verbatim', () => {
+  it('carries every row, including ones that are not decisions', () => {
+    // "Show full command" is classified 'view' and deliberately excluded from
+    // responseKeys, so `choices` alone would drop it from the card entirely.
+    const panel = REAL_PANEL.replace('  4. Deny', '  4. Show full command\n  5. Deny')
+    const detection = detectHermesApprovalPanel(panel)
+    expect(detection?.options.map((o) => o.label)).toContain('Show full command')
+  })
+
+  it('gives each row the digit that selects it', () => {
+    const detection = detectHermesApprovalPanel(REAL_PANEL)
+    for (const option of detection?.options ?? []) {
+      expect(option.keys).toBe(String(option.index))
+    }
+  })
+
+  it('never offers the view row as an answer', () => {
+    // Sending it would look like approving and silently do nothing.
+    const panel = REAL_PANEL.replace('  4. Deny', '  4. Show full command\n  5. Deny')
+    const detection = detectHermesApprovalPanel(panel)
+    const viewRow = detection?.choices.find((c) => c.key === 'view')
+    expect(viewRow).toBeDefined()
+    expect(Object.values(detection?.responseKeys ?? {})).not.toContain(String(viewRow?.index))
+  })
+})

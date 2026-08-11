@@ -34,6 +34,7 @@ export type IslandEvent =
     }
   | { type: 'ENQUEUE_APPROVAL'; request: ApprovalRequest; autoExpand?: boolean }
   | { type: 'ANSWER_APPROVAL'; requestId: string; decision: ApprovalDecision }
+  | { type: 'SHOW_APPROVAL'; requestId: string }
   | {
       type: 'INVALIDATE_APPROVAL'
       requestId: string
@@ -226,6 +227,27 @@ export function reduceIsland(state: IslandSnapshot, event: IslandEvent): IslandS
           activityLabel: 'Needs approval',
           pendingApprovalIds: [...new Set([...agent.pendingApprovalIds, request.id])]
         })
+      }
+    }
+
+    /*
+     * Bring one queued approval to the front and show it.
+     *
+     * The queue is otherwise strictly oldest-first, which is right when
+     * requests arrive on their own. It is wrong when the user points at a
+     * specific session and says "that one" — picking a session with a pending
+     * decision used to leave them on the list with no route to it.
+     */
+    case 'SHOW_APPROVAL': {
+      if (!state.approvals[event.requestId]) return state
+      if (!state.approvalQueue.includes(event.requestId)) return state
+      return {
+        ...state,
+        mode: 'approval',
+        approvalQueue: [
+          event.requestId,
+          ...state.approvalQueue.filter((id) => id !== event.requestId)
+        ]
       }
     }
 

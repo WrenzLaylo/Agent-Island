@@ -205,3 +205,50 @@ describe('island state machine', () => {
     expect(state.activeAgentId).toBe('claude')
   })
 })
+
+describe('SHOW_APPROVAL', () => {
+  function withTwoQueued() {
+    let state = createInitialIslandState('/w', 'claude')
+    const base = {
+      agentId: 'claude' as const,
+      summary: 's',
+      detail: 'd',
+      cwd: '/w',
+      risk: 'low' as const,
+      processAlive: true,
+      waitingForInput: true,
+      answered: false,
+      superseded: false
+    }
+    state = reduceIsland(state, {
+      type: 'ENQUEUE_APPROVAL',
+      request: { ...base, id: 'old', sessionId: 'a', createdAt: 1, expiresAt: 9_000_000_000_000 }
+    })
+    state = reduceIsland(state, {
+      type: 'ENQUEUE_APPROVAL',
+      request: { ...base, id: 'new', sessionId: 'b', createdAt: 2, expiresAt: 9_000_000_000_000 }
+    })
+    return state
+  }
+
+  it('queues oldest-first by default', () => {
+    expect(withTwoQueued().approvalQueue).toEqual(['old', 'new'])
+  })
+
+  it('brings the requested approval to the front', () => {
+    // Picking a session says "that one", which outranks arrival order.
+    const state = reduceIsland(withTwoQueued(), { type: 'SHOW_APPROVAL', requestId: 'new' })
+    expect(state.approvalQueue).toEqual(['new', 'old'])
+    expect(state.mode).toBe('approval')
+  })
+
+  it('keeps the rest of the queue in order', () => {
+    const state = reduceIsland(withTwoQueued(), { type: 'SHOW_APPROVAL', requestId: 'new' })
+    expect(state.approvalQueue.slice(1)).toEqual(['old'])
+  })
+
+  it('ignores an id that is not queued', () => {
+    const before = withTwoQueued()
+    expect(reduceIsland(before, { type: 'SHOW_APPROVAL', requestId: 'nope' })).toBe(before)
+  })
+})

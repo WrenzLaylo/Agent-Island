@@ -1069,6 +1069,14 @@ export function App() {
           onApprovalOption={(index, decision) => void answerApprovalOption(index, decision)}
           onContinueInTerminal={(agentId, sessionId) => void openTerminal(agentId, sessionId)}
           onOpenTerminal={(agentId, sessionId) => void openTerminal(agentId, sessionId)}
+          onShowApproval={(sessionId) => {
+            // The oldest queued request for that session — the one it is
+            // actually blocked on.
+            const requestId = stateRef.current.approvalQueue.find(
+              (id) => stateRef.current.approvals[id]?.sessionId === sessionId
+            )
+            if (requestId) dispatch({ type: 'SHOW_APPROVAL', requestId })
+          }}
           onDismissHandoff={() => {
             setTerminalInput(null)
             setPanel(null)

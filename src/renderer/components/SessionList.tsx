@@ -6,6 +6,8 @@ import { StatusDot } from './StatusDot'
 interface SessionListProps {
   rows: SessionRow[]
   onOpenSession: (agentId: AgentId, sessionId: string) => void
+  /** Bring this session's queued decision to the front of the card. */
+  onShowApproval: (sessionId: string) => void
 }
 
 /**
@@ -17,7 +19,7 @@ interface SessionListProps {
  * answer "which session", and clicking one raises that exact terminal rather
  * than whichever session happened to register most recently.
  */
-export function SessionList({ rows, onOpenSession }: SessionListProps) {
+export function SessionList({ rows, onOpenSession, onShowApproval }: SessionListProps) {
   if (rows.length === 0) return null
 
   return (
@@ -40,9 +42,22 @@ export function SessionList({ rows, onOpenSession }: SessionListProps) {
                 ? `${row.agentLabel} in ${row.folder || 'unknown folder'} · ${row.terminalLabel}`
                 : `${row.terminalLabel} exposes no window that can be raised — switch to it manually`
             }
-            aria-label={`Show ${row.agentLabel} session in ${row.folder || 'unknown folder'}, ${row.terminalLabel}`}
-            disabled={!row.raisable}
-            onClick={() => onOpenSession(row.agentId, row.id)}
+            aria-label={
+              row.pendingApprovals > 0
+                ? `Answer ${row.pendingApprovals} pending ${row.agentLabel} approval${row.pendingApprovals > 1 ? 's' : ''} in ${row.folder || 'unknown folder'}`
+                : `Show ${row.agentLabel} session in ${row.folder || 'unknown folder'}, ${row.terminalLabel}`
+            }
+            disabled={!row.raisable && row.pendingApprovals === 0}
+            /*
+             * A row with a decision waiting opens that decision. Handing off to
+             * the terminal instead was a dead end: the island said "Needs you"
+             * and then offered no way to answer from the island.
+             */
+            onClick={() =>
+              row.pendingApprovals > 0
+                ? onShowApproval(row.id)
+                : onOpenSession(row.agentId, row.id)
+            }
           >
             <AgentMark agentId={row.agentId} mini />
             <span className="session-row-copy">

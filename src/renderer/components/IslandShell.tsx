@@ -48,6 +48,8 @@ interface IslandShellProps {
   onApprovalOption: (index: number, decision: ApprovalDecision | null) => void
   onContinueInTerminal: (agentId: AgentId, sessionId?: string) => void
   onOpenTerminal: (agentId: AgentId, sessionId?: string) => void
+  /** Bring a specific session's queued decision to the front. */
+  onShowApproval: (sessionId: string) => void
   onDismissHandoff: () => void
   onDismiss: () => void
   onOpenSettings: () => void
@@ -216,6 +218,7 @@ export function IslandShell(props: IslandShellProps) {
     onApprovalOption,
     onContinueInTerminal,
     onOpenTerminal,
+    onShowApproval,
     onDismissHandoff,
     onDismiss,
     onOpenSettings,
@@ -499,7 +502,7 @@ export function IslandShell(props: IslandShellProps) {
               open a terminal for it. Swapping the tabs out for the rows left
               no way to reach an idle agent while two sessions were running.
             */}
-            {multiSession ? <SessionList rows={sessionRows} onOpenSession={onOpenTerminal} /> : null}
+            {multiSession ? <SessionList rows={sessionRows} onOpenSession={onOpenTerminal} onShowApproval={onShowApproval} /> : null}
             <AgentTabs agents={AGENT_ORDER.map((id) => state.agents[id])} activeAgentId={state.activeAgentId} onSelect={onSelectAgent} />
           </motion.div>
         )}
