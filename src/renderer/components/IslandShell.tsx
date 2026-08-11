@@ -152,11 +152,19 @@ function sessionHeadline(rows: SessionRow[]): string {
   return rows.some((row) => row.busy) ? 'Working' : 'Ready'
 }
 
+/**
+ * Counts, not a restatement.
+ *
+ * This used to read "5 sessions · 1 working" directly under the headline
+ * "Working" — the same fact twice, on two lines, in two sizes. The headline
+ * says what the state is; this says how much of the fleet is in it.
+ */
 function sessionSummary(rows: SessionRow[]): string {
   const waiting = sessionsWaiting(rows)
   const working = rows.filter((row) => row.busy).length
-  const detail = waiting > 0 ? `${waiting} waiting on you` : working > 0 ? `${working} working` : 'all idle'
-  return `${rows.length} sessions · ${detail}`
+  if (waiting > 0) return `${waiting} of ${rows.length} sessions`
+  if (working > 0) return `${working} of ${rows.length} sessions`
+  return `${rows.length} sessions idle`
 }
 
 /** Motion only where something is genuinely in flight. */

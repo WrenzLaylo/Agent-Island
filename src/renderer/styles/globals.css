@@ -209,6 +209,21 @@ select:focus-visible,
   border-radius: inherit;
 }
 
+/*
+ * The one moment that matters: an agent going from working to blocked.
+ *
+ * A hairline fading over 750ms is legible on a 440px panel, where you are
+ * already looking. On a 56px orb at the edge of the screen — the state you
+ * are in precisely when you are NOT looking — it is close to invisible. Same
+ * event, so the same timing; more presence where there are fewer pixels to
+ * carry it.
+ */
+.view-compact .attention-flash,
+.view-dock .attention-flash {
+  border-width: 2px;
+  background: rgba(240, 180, 95, 0.14);
+}
+
 /* Views overlap while cross-fading rather than queueing exit-then-enter. */
 .island-content,
 .compact-button,
@@ -1516,15 +1531,22 @@ select:focus-visible,
   padding: var(--s-3);
 }
 
+/*
+ * The question the agent is blocked on.
+ *
+ * It was 12px grey, clamped to two lines — the smallest and dimmest text on a
+ * panel whose entire purpose is to relay it. Same inverted hierarchy the
+ * approval and choice cards had; this was the last surface still carrying it.
+ */
 .handoff-body > p {
   display: -webkit-box;
   overflow: hidden;
   margin: 0;
-  color: var(--text-2);
-  font-size: var(--fs-sm);
-  line-height: 1.45;
+  color: var(--text);
+  font-size: var(--fs-md);
+  line-height: 1.4;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 3;
 }
 
 .terminal-handoff-button {
