@@ -43,6 +43,7 @@ import type {
 } from '../shared/contracts'
 import { isAgentId } from '../shared/pty-types'
 import { tuckedBounds, tuckSideFor } from '../shared/tuck'
+import { loginItemTarget, supportsLoginItem } from './login-item'
 import {
   axisSettled,
   frameIntervalMs,
@@ -424,12 +425,31 @@ async function finishIslandDrag(): Promise<IslandWindowLayout> {
   return currentLayout()
 }
 
+/**
+ * Register or remove the login item, and report whether it took.
+ *
+ * Returns the state Windows actually holds afterwards rather than the state
+ * that was asked for, so a refused write surfaces instead of leaving the tray
+ * checkbox claiming something untrue.
+ */
+function applyLaunchAtStartup(enabled: boolean): boolean {
+  if (!supportsLoginItem(process.platform)) return false
+  const target = loginItemTarget(app.isPackaged, process.execPath, app.getAppPath())
+  try {
+    app.setLoginItemSettings({ openAtLogin: enabled, ...target })
+    return app.getLoginItemSettings(target).openAtLogin
+  } catch {
+    // Locked-down machines can refuse the registry write outright.
+    return false
+  }
+}
+
 function applySettingsSideEffects(previous: IslandSettings, next: IslandSettings): void {
   if (previous.alwaysOnTop !== next.alwaysOnTop && mainWindow) {
     mainWindow.setAlwaysOnTop(next.alwaysOnTop, 'screen-saver')
   }
-  if (previous.launchAtStartup !== next.launchAtStartup && app.isPackaged) {
-    app.setLoginItemSettings({ openAtLogin: next.launchAtStartup })
+  if (previous.launchAtStartup !== next.launchAtStartup) {
+    applyLaunchAtStartup(next.launchAtStartup)
   }
   if (previous.preferredDockSide !== next.preferredDockSide && next.preferredDockSide !== 'none') {
     dockSide = next.preferredDockSide
@@ -1062,8 +1082,19 @@ async function bootstrap(): Promise<void> {
   createWindow()
   createTray()
 
+  /*
+   * Re-apply on every launch so the registry entry follows the app if the
+   * repository moves: the unpackaged entry embeds an absolute path, and a
+   * stale one would start Electron's placeholder app at login instead.
+   *
+   * If the write is refused, the stored setting is corrected rather than left
+   * claiming a login item that does not exist.
+   */
   const settings = getSettings()
-  if (app.isPackaged) app.setLoginItemSettings({ openAtLogin: settings.launchAtStartup })
+  if (supportsLoginItem(process.platform)) {
+    const actual = applyLaunchAtStartup(settings.launchAtStartup)
+    if (actual !== settings.launchAtStartup) updateSettings({ launchAtStartup: actual })
+  }
 
   globalShortcut.register('Control+Alt+Space', () => {
     // Opening the island by shortcut is a deliberate act, so it takes focus.
