@@ -24,6 +24,42 @@ export interface AgentDiscoveryResult {
   agents: DiscoveredAgent[]
 }
 
+/** Windows executable extensions, most preferred first. */
+const WINDOWS_EXEC_PRIORITY = ['.exe', '.cmd', '.bat', '.com']
+
+/**
+ * Choose the entry a Windows process can actually start.
+ *
+ * `where` lists every PATH match in PATH order, and npm installs a pair: an
+ * extensionless shell script alongside a `.cmd`. Taking the first line handed
+ * back the extensionless one, which CreateProcess cannot run — it fails with
+ * ERROR_BAD_EXE_FORMAT (193). That is the whole of the "Could not start codex,
+ * error code 193" report: the binary was fine, our choice of it was not.
+ *
+ * Extensionless entries are ranked last rather than discarded. On a machine
+ * where the only match has no extension it may still be a real PE image, and
+ * returning nothing would report the agent as missing — a worse answer than a
+ * questionable one.
+ */
+export function pickExecutable(matches: string[], isWindows: boolean): string | undefined {
+  if (!matches.length) return undefined
+  if (!isWindows) return matches[0]
+
+  const rank = (path: string): number => {
+    const dot = path.lastIndexOf('.')
+    const slash = Math.max(path.lastIndexOf('/'), path.lastIndexOf(String.fromCharCode(92)))
+    const ext = dot > slash ? path.slice(dot).toLowerCase() : ''
+    if (ext === '') return WINDOWS_EXEC_PRIORITY.length + 1
+    const known = WINDOWS_EXEC_PRIORITY.indexOf(ext)
+    return known >= 0 ? known : WINDOWS_EXEC_PRIORITY.length
+  }
+
+  // Stable: equal ranks keep PATH order, so the earliest .exe still wins.
+  return matches
+    .map((path, index) => ({ path, index, rank: rank(path) }))
+    .sort((a, b) => a.rank - b.rank || a.index - b.index)[0]?.path
+}
+
 async function pathExists(path: string): Promise<boolean> {
   try {
     await access(path, constants.F_OK)
@@ -40,11 +76,11 @@ async function which(command: string): Promise<string | undefined> {
       windowsHide: true,
       timeout: 5000
     })
-    const first = stdout
+    const matches = stdout
       .split(/\r?\n/)
       .map((line: string) => line.trim())
-      .find(Boolean)
-    return first
+      .filter(Boolean)
+    return pickExecutable(matches, process.platform === 'win32')
   } catch {
     return undefined
   }
@@ -66,10 +102,13 @@ async function tryVersion(path: string, args: string[]): Promise<string | undefi
 
 async function resolveClaude(): Promise<DiscoveredAgent> {
   const home = homedir()
+  // Runnable extensions first. These are tried in order, so listing the
+  // extensionless shim ahead of the .exe picked the one that cannot start.
   const candidates = [
-    join(home, '.local', 'bin', 'claude'),
+    join(home, 'AppData', 'Local', 'Claude', 'claude.exe'),
     join(home, '.local', 'bin', 'claude.exe'),
-    join(home, 'AppData', 'Local', 'Claude', 'claude.exe')
+    join(home, 'AppData', 'Roaming', 'npm', 'claude.cmd'),
+    join(home, '.local', 'bin', 'claude')
   ]
 
   let found = await which('claude')
@@ -106,11 +145,14 @@ async function resolveClaude(): Promise<DiscoveredAgent> {
 
 async function resolveCodex(): Promise<DiscoveredAgent> {
   const home = homedir()
+  // Runnable extensions first, and the real installer location: Codex ships to
+  // Programs/OpenAI/Codex/bin, which this list did not mention at all.
   const candidates = [
-    join(home, '.local', 'bin', 'codex'),
+    join(home, 'AppData', 'Local', 'Programs', 'OpenAI', 'Codex', 'bin', 'codex.exe'),
+    join(home, 'AppData', 'Local', 'Programs', 'codex', 'codex.exe'),
     join(home, '.local', 'bin', 'codex.exe'),
     join(home, 'AppData', 'Roaming', 'npm', 'codex.cmd'),
-    join(home, 'AppData', 'Local', 'Programs', 'codex', 'codex.exe')
+    join(home, '.local', 'bin', 'codex')
   ]
 
   let found = await which('codex')
@@ -147,8 +189,10 @@ async function resolveCodex(): Promise<DiscoveredAgent> {
 
 async function resolveHermes(): Promise<DiscoveredAgent> {
   const home = homedir()
+  // Runnable extensions first, as above.
   const candidates = [
     join(home, 'AppData', 'Local', 'hermes', 'hermes-agent', 'venv', 'Scripts', 'hermes.exe'),
+    join(home, '.local', 'bin', 'hermes.exe'),
     join(home, 'AppData', 'Local', 'hermes', 'hermes-agent', 'venv', 'Scripts', 'hermes'),
     join(home, '.local', 'bin', 'hermes')
   ]
