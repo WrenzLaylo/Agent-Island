@@ -29,9 +29,25 @@ export interface HermesApprovalDetection {
 }
 
 const TITLE_RE = /Dangerous Command/i
-const FOOTER_RE = /Type\s+1\/2\/3\s+or\s+use/i
+
+/**
+ * Dangerous-command choices as Hermes Agent v0.19.1 renders them:
+ *
+ *   ❯ 1. Allow once
+ *     2. Allow for this session
+ *     4. Deny
+ *
+ * Dotted, not bracketed, and with no footer line. This detector previously
+ * required `[1]` plus a `Type 1/2/3 or use` footer, so it returned null
+ * against every real panel — three independent reasons to miss, which is why
+ * Hermes approvals never reached the island at all.
+ *
+ * Bracketed `[N]` rows with that footer are a *different* panel: slash-command
+ * confirmations. Requiring the dotted form keeps the two apart, on top of the
+ * title check.
+ */
 const CHOICE_RE =
-  /\[(\d+)\]\s*(Allow once|Allow for this session|Add to permanent allowlist|Deny|Show full command)/gi
+  /(?:^|\n)\s*[❯>]?\s*(\d+)\.\s*(Allow once|Allow for this session|Add to permanent allowlist|Deny|Show full command)\b/gi
 
 const LABEL_TO_KEY: Record<string, HermesChoiceKey> = {
   'allow once': 'once',
@@ -43,27 +59,39 @@ const LABEL_TO_KEY: Record<string, HermesChoiceKey> = {
 
 /**
  * Deterministic Hermes approval panel detector.
- * Requires title + footer + numbered choice labels known to Hermes CLI.
+ * Requires the title and dotted numbered choices with labels Hermes actually
+ * prints. No footer: v0.19.1 does not render one on this panel.
  * Does NOT match free-text that merely mentions "approve".
  */
 export function detectHermesApprovalPanel(rawOutput: string): HermesApprovalDetection | null {
   const text = normalizeTerminalText(rawOutput)
-  if (!TITLE_RE.test(text) || !FOOTER_RE.test(text)) {
-    return null
-  }
+  if (!TITLE_RE.test(text)) return null
 
   // Prefer the last panel occurrence (most recent prompt).
   const titleIdx = text.toLowerCase().lastIndexOf('dangerous command')
   if (titleIdx < 0) return null
   const window = text.slice(Math.max(0, titleIdx - 80), titleIdx + 4000)
 
-  if (!TITLE_RE.test(window) || !FOOTER_RE.test(window)) {
-    return null
-  }
+  if (!TITLE_RE.test(window)) return null
+
+  /*
+   * Match against the panel with its box drawing removed.
+   *
+   * Every row arrives wrapped in box borders, so a line-anchored
+   * pattern never sees the marker or the digit at the start of a line. The
+   * previous pattern searched anywhere in the raw text, which worked only
+   * because `[1]` is rare enough to be self-anchoring; a bare `1.` is not, and
+   * would happily match prose. Stripping the borders first lets the pattern
+   * stay anchored without being defeated by them.
+   */
+  const cleaned = window
+    .split('\n')
+    .map((line) => line.replace(/[│|]/g, ' ').trimEnd())
+    .join('\n')
 
   const choices: DetectedHermesChoice[] = []
   const seenIndexes = new Set<number>()
-  for (const match of window.matchAll(CHOICE_RE)) {
+  for (const match of cleaned.matchAll(CHOICE_RE)) {
     const index = Number(match[1])
     const label = match[2]
     const key = LABEL_TO_KEY[label.toLowerCase()]
@@ -82,7 +110,7 @@ export function detectHermesApprovalPanel(rawOutput: string): HermesApprovalDete
   // Command: lines between title line and first choice line.
   const lines = window.split('\n').map((l) => l.replace(/[│|]/g, '').trim())
   const titleLine = lines.findIndex((l) => /Dangerous Command/i.test(l))
-  const firstChoiceLine = lines.findIndex((l) => /\[\d+\]\s*Allow once/i.test(l))
+  const firstChoiceLine = lines.findIndex((l) => /^[❯>]?\s*\d+\.\s*Allow once/i.test(l))
   if (titleLine < 0 || firstChoiceLine <= titleLine) {
     return null
   }
@@ -121,7 +149,10 @@ export function detectHermesApprovalPanel(rawOutput: string): HermesApprovalDete
   const responseKeys: HermesApprovalDetection['responseKeys'] = {}
   for (const choice of choices) {
     if (choice.key === 'view') continue
-    responseKeys[choice.key] = `${choice.index}\r`
+    // A bare digit submits immediately in Hermes' prompt-toolkit UI. The
+    // trailing carriage return this used to send would arrive after the panel
+    // had already closed, landing in the composer instead.
+    responseKeys[choice.key] = `${choice.index}`
   }
 
   if (!responseKeys.once || !responseKeys.deny) {

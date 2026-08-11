@@ -3,12 +3,10 @@
 │                                              │
 │ rm -rf node_modules                          │
 │                                              │
-│ This will permanently delete files.          │
+│ ❯ 1. Allow once                              │
+│   2. Allow for this session                  │
+│   3. Add to permanent allowlist              │
+│   4. Deny                                    │
 │                                              │
-│ ❯ [1] Allow once — run this command once     │
-│   [2] Allow for this session — remember now  │
-│   [3] Add to permanent allowlist — save it   │
-│   [4] Deny — block this command              │
-│                                              │
-│ Type 1/2/3 or use ↑/↓ then Enter. ESC/Ctrl+C cancels. │
+│ recursive delete                             │
 ╰──────────────────────────────────────────────╯
