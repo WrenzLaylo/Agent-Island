@@ -47,6 +47,9 @@
   --blue: #7fb2ff;
   --red: #ff7b80;
 
+  /* Commands, digits and pids: anything the user compares against a terminal. */
+  --mono: ui-monospace, "Cascadia Mono", Consolas, "SF Mono", monospace;
+
   --motion: 160ms;
   --ease: cubic-bezier(0.2, 0, 0, 1);
 
@@ -1062,12 +1065,22 @@ select:focus-visible,
   gap: var(--s-2);
 }
 
+/* Demoted to a caption. It says "Claude wants to run a command", which the
+   header already implies; the command itself is the fact worth reading. */
 .approval-summary-copy {
-  display: flex;
   min-width: 0;
   flex: 1;
-  flex-direction: column;
-  gap: 2px;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+}
+
+/* Elapsed time. Quiet, tabular so it does not jitter as it ticks. */
+.approval-elapsed {
+  flex: 0 0 auto;
+  color: var(--text-3);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
 }
 
 .approval-summary-copy strong {
@@ -1079,6 +1092,38 @@ select:focus-visible,
 .approval-summary-copy small {
   color: var(--text-2);
   font-size: var(--fs-sm);
+}
+
+/*
+ * Risk reads at the command, not across the card.
+ *
+ * As a pill in the opposite corner it was something you noticed after
+ * deciding. Sitting under the command it is part of the same glance, and the
+ * word stays alongside the colour so the signal does not depend on hue alone.
+ */
+.command-risk {
+  display: flex;
+  margin: var(--s-2) 0 0;
+  flex-wrap: wrap;
+  gap: var(--s-1) var(--s-2);
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+}
+
+.command-risk-level {
+  flex: 0 0 auto;
+  font-weight: 600;
+}
+
+.risk-low .command-risk-level { color: var(--green); }
+.risk-elevated .command-risk-level,
+.risk-unknown .command-risk-level { color: var(--amber); }
+.risk-high .command-risk-level { color: var(--red); }
+
+.command-risk-reason {
+  min-width: 0;
+  flex: 1 1 auto;
+  color: var(--text-3);
 }
 
 .risk-pill {
@@ -1097,12 +1142,27 @@ select:focus-visible,
 .risk-pill.risk-unknown { color: var(--amber); background: rgba(240, 180, 95, 0.12); }
 .risk-pill.risk-high { color: var(--red); background: rgba(255, 123, 128, 0.12); }
 
+/*
+ * The command is the whole decision, so it carries the card.
+ *
+ * It used to be 11px monospace inside a grey rounded box under an uppercase
+ * "COMMAND" label — the smallest text on screen, describing the one thing the
+ * user has to read before committing. `rm -rf` and `npm test` were set
+ * identically, distinguished only by a small chip in the opposite corner.
+ *
+ * Now: a rule whose colour is the risk, and type large enough to read at a
+ * glance under interruption. The box, the border and the label are gone; the
+ * setting says "this is a command" without spending a line on the word.
+ */
 .command-block {
-  overflow: hidden;
-  border: 1px solid var(--rule);
-  border-radius: var(--r-md);
-  background: var(--raise);
+  padding-left: var(--s-3);
+  border-left: 3px solid var(--rule);
 }
+
+.command-block.risk-low { border-left-color: rgba(95, 211, 154, 0.7); }
+.command-block.risk-elevated,
+.command-block.risk-unknown { border-left-color: var(--amber); }
+.command-block.risk-high { border-left-color: var(--red); }
 
 .command-label {
   display: block;
@@ -1115,14 +1175,16 @@ select:focus-visible,
 }
 
 .command-block pre {
-  max-height: 104px;
+  max-height: 132px;
   margin: 0;
   overflow: auto;
-  padding: 6px var(--s-3) var(--s-3);
+  padding: 0;
   color: var(--text);
-  font-family: ui-monospace, Consolas, monospace;
-  font-size: var(--fs-sm);
-  line-height: 1.5;
+  font-family: var(--mono);
+  font-size: var(--fs-lg);
+  line-height: 1.45;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
   white-space: pre-wrap;
   word-break: break-word;
   user-select: text;

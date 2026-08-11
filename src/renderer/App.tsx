@@ -51,12 +51,17 @@ const CHOICE_ROW_H = 44
 const MAX_VISIBLE_CHOICE_ROWS = 4
 
 /**
- * Approval-card geometry: summary row, command block and context above the
- * option list. The card now renders one row per option the agent offered
- * rather than a fixed set of four decisions, so the height follows that count.
- * Past MAX_VISIBLE_APPROVAL_ROWS the list scrolls (see `.decision-list`).
+ * Approval-card geometry: summary row, command block and folder above the
+ * option list. One row per option the agent offered, so the height follows
+ * that count; past MAX_VISIBLE_APPROVAL_ROWS the list scrolls (see
+ * `.decision-list`).
+ *
+ * The base came down from 292 when the command block lost its "COMMAND"
+ * label, its box, and the separate "Flagged" row — that chrome was being
+ * reserved for after it no longer existed, leaving a wide band of nothing
+ * between the folder and the first option.
  */
-const APPROVAL_BASE_H = 292
+const APPROVAL_BASE_H = 232
 const APPROVAL_ROW_H = 56
 const MAX_VISIBLE_APPROVAL_ROWS = 5
 

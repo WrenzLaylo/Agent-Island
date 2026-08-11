@@ -18,6 +18,26 @@ interface ApprovalCardProps {
   onOption: (index: number, decision: ApprovalDecision | null) => void
 }
 
+/**
+ * How long the agent has been blocked.
+ *
+ * With a queue, this is the strongest signal for which decision to make
+ * first, and the card showed nothing — a request three seconds old and one
+ * that had stalled an agent for four minutes were indistinguishable.
+ */
+function useElapsed(since: number): string {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [since])
+  const seconds = Math.max(0, Math.round((now - since) / 1000))
+  if (seconds < 60) return `${seconds}s`
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes}m ${seconds % 60}s`
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`
+}
+
 function riskLabel(risk: ApprovalRequest['risk']): string {
   switch (risk) {
     case 'high':
@@ -131,6 +151,7 @@ export function ApprovalCard({ approval, approveEnabled, disabled = false, onDec
   }, [approval.id])
 
   const inert = disabled || !armed
+  const elapsed = useElapsed(approval.createdAt)
 
   /**
    * `index` is present whenever the agent's own option list reached us, and is
@@ -155,23 +176,26 @@ export function ApprovalCard({ approval, approveEnabled, disabled = false, onDec
           agent, so this row carries only the request-specific summary and the
           risk verdict. */}
       <div className="approval-summary-row">
-        <div className="approval-summary-copy">
-          <strong>{approval.summary || 'Command approval'}</strong>
-        </div>
-        <span className={`risk-pill risk-${approval.risk}`}>{riskLabel(approval.risk)}</span>
+        <span className="approval-summary-copy">{approval.summary || 'Command approval'}</span>
+        <span className="approval-elapsed" title="How long the agent has been waiting">
+          {elapsed}
+        </span>
       </div>
 
-      <div className="command-block">
-        <span className="command-label">Command</span>
+      {/* The command is the decision. Everything else on this card is context
+          for it, so it gets the type scale and the risk carries in its own
+          rule rather than in a badge elsewhere. */}
+      <div className={`command-block risk-${approval.risk}`}>
         <pre title={approval.detail}>{shortenCommand(approval.detail)}</pre>
+        <p className="command-risk">
+          <span className="command-risk-level">{riskLabel(approval.risk)}</span>
+          {approval.riskReason ? <span className="command-risk-reason">{approval.riskReason}</span> : null}
+        </p>
       </div>
 
       <div className="approval-context">
         {approval.cwd ? (
           <div><span>Folder</span><code>{approval.cwd}</code></div>
-        ) : null}
-        {approval.riskReason ? (
-          <div><span>Flagged</span><p>{approval.riskReason}</p></div>
         ) : null}
       </div>
 
