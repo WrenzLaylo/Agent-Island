@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { answersLivePrompt } from '../../src/shared/local-answer'
+import { answersLivePrompt, mayAnswerSomePrompt } from '../../src/shared/local-answer'
 
 const ESC = String.fromCharCode(27)
 const CR = String.fromCharCode(13)
@@ -66,5 +66,28 @@ describe('answersLivePrompt', () => {
     // is also a real option digit — this documents that the check is
     // character-based and will treat it as an answer.
     expect(answersLivePrompt(`${ESC}[1;5A`, OFFERED)).toBe(true)
+  })
+})
+
+describe('mayAnswerSomePrompt', () => {
+  it('accepts any digit, since the option list is not yet known', () => {
+    expect(mayAnswerSomePrompt('7')).toBe(true)
+  })
+
+  it('accepts Enter', () => {
+    expect(mayAnswerSomePrompt(CR)).toBe(true)
+  })
+
+  it('rejects zero, which no agent numbers a row with', () => {
+    expect(mayAnswerSomePrompt('0')).toBe(false)
+  })
+
+  it('rejects arrow keys and Ctrl+C', () => {
+    expect(mayAnswerSomePrompt(`${ESC}[B`)).toBe(false)
+    expect(mayAnswerSomePrompt(ETX)).toBe(false)
+  })
+
+  it('rejects ordinary letters', () => {
+    expect(mayAnswerSomePrompt('hello')).toBe(false)
   })
 })

@@ -371,3 +371,64 @@ describe('claude numbered questions that are not permission grants', () => {
     ).toBeNull()
   })
 })
+
+describe('answering before the island has raised anything', () => {
+  const PANEL = panel([
+    'Bash command',
+    '',
+    '  npm run build',
+    '',
+    'Do you want to proceed?',
+    '❯ 1. Yes',
+    '  2. Yes, and don' + APOS + 't ask again for npm commands',
+    '  3. No'
+  ])
+
+  it('raises normally when nothing was answered', () => {
+    const update = updateClaudeApprovalTracker({
+      state: createApprovalTrackerState(),
+      chunkOrFullBuffer: PANEL,
+      cwd: '/w',
+      processAlive: true
+    })
+    expect(update.raised).toBeTruthy()
+  })
+
+  it('does not raise a panel whose fingerprint was already answered', () => {
+    // The wrapper records the on-screen fingerprint when the user answers
+    // inside the debounce window. Without it, the pending scan finds the panel
+    // still in the replay buffer and raises a request already settled — the
+    // "sometimes it persists" report.
+    const fingerprint = detectClaudeApprovalPanel(PANEL)?.fingerprint ?? ''
+    expect(fingerprint).not.toBe('')
+
+    const update = updateClaudeApprovalTracker({
+      state: { pending: null, lastFingerprint: fingerprint, responseKeys: null },
+      chunkOrFullBuffer: PANEL,
+      cwd: '/w',
+      processAlive: true
+    })
+    expect(update.raised).toBeUndefined()
+  })
+
+  it('still raises a genuinely different panel afterwards', () => {
+    // Suppression must be specific to what was answered, not a blanket mute.
+    const answered = detectClaudeApprovalPanel(PANEL)?.fingerprint ?? ''
+    const next = panel([
+      'Bash command',
+      '',
+      '  rm -rf dist',
+      '',
+      'Do you want to proceed?',
+      '❯ 1. Yes',
+      '  2. No'
+    ])
+    const update = updateClaudeApprovalTracker({
+      state: { pending: null, lastFingerprint: answered, responseKeys: null },
+      chunkOrFullBuffer: next,
+      cwd: '/w',
+      processAlive: true
+    })
+    expect(update.raised).toBeTruthy()
+  })
+})

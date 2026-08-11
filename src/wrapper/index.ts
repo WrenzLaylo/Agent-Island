@@ -25,19 +25,28 @@ import { discoverAgents } from '../main/agents/discover'
 import { adapterEnv, buildLaunchSpec } from '../main/agents/launch'
 import {
   createApprovalTrackerState,
+  detectHermesApprovalPanel,
   resolveHermesResponseKeys,
   updateHermesApprovalTracker,
   type ApprovalTrackerState
 } from '../main/agents/hermes-approval'
-import { resolveCodexResponseKeys, updateCodexApprovalTracker } from '../main/agents/codex-approval'
-import { resolveClaudeResponseKeys, updateClaudeApprovalTracker } from '../main/agents/claude-approval'
+import {
+  detectCodexApprovalPanel,
+  resolveCodexResponseKeys,
+  updateCodexApprovalTracker
+} from '../main/agents/codex-approval'
+import {
+  detectClaudeApprovalPanel,
+  resolveClaudeResponseKeys,
+  updateClaudeApprovalTracker
+} from '../main/agents/claude-approval'
 import {
   createTerminalInputTrackerState,
   updateTerminalInputTracker,
   type TerminalInputTrackerState
 } from '../main/agents/terminal-input'
 import { normalizeTerminalText } from '../shared/ansi'
-import { answersLivePrompt } from '../shared/local-answer'
+import { answersLivePrompt, mayAnswerSomePrompt } from '../shared/local-answer'
 import type { AgentId, ApprovalDecision } from '../shared/contracts'
 import {
   SESSION_HEARTBEAT_MS,
@@ -489,6 +498,20 @@ async function main(): Promise<void> {
     files.clearPrompt()
   }
 
+  /** Fingerprint of whatever panel is on screen right now, without raising. */
+  const currentPanelFingerprint = (): string | null => {
+    const text = normalizeTerminalText(
+      replay.length > SCAN_TAIL_CHARS ? replay.slice(-SCAN_TAIL_CHARS) : replay
+    )
+    const detection =
+      agentId === 'hermes'
+        ? detectHermesApprovalPanel(text)
+        : agentId === 'codex'
+          ? detectCodexApprovalPanel(text)
+          : detectClaudeApprovalPanel(text)
+    return detection?.fingerprint ?? null
+  }
+
   const scan = () => {
     const text = normalizeTerminalText(replay.length > SCAN_TAIL_CHARS ? replay.slice(-SCAN_TAIL_CHARS) : replay)
 
@@ -709,6 +732,27 @@ async function main(): Promise<void> {
           responseKeys: null
         }
         clearPrompt()
+      }
+    } else if (scanTimer && mayAnswerSomePrompt(text)) {
+      /*
+       * Answered before the island ever showed it.
+       *
+       * Detection is debounced, so a panel can be on screen for up to
+       * SCAN_MAX_DELAY_MS before it is raised. Answer inside that window and
+       * the branch above has nothing to clear — then the pending scan finds
+       * the panel still sitting in the replay buffer and raises a request the
+       * user settled a moment ago. That is the "sometimes it persists" report.
+       *
+       * `scanTimer` being set is exactly that window: output has arrived and
+       * has not been scanned yet. Outside it the buffer is already settled, so
+       * this costs nothing on ordinary typing.
+       *
+       * Recording the fingerprint as already-answered is what stops the raise;
+       * the detection is only to learn which panel that is.
+       */
+      const fingerprint = currentPanelFingerprint()
+      if (fingerprint) {
+        approval = { pending: null, lastFingerprint: fingerprint, responseKeys: null }
       }
     }
     try {

@@ -46,3 +46,21 @@ export function answersLivePrompt(input: string, offeredIndexes: readonly number
 
   return false
 }
+
+/**
+ * Could this input answer *some* numbered panel, when we do not yet know which
+ * options were offered?
+ *
+ * Used in the window between an agent drawing a panel and the debounced scan
+ * noticing it. Necessarily looser than answersLivePrompt — any digit counts,
+ * because the option list has not been parsed yet — so callers must confirm a
+ * panel is actually on screen before acting on it.
+ */
+export function mayAnswerSomePrompt(input: string): boolean {
+  for (let i = 0; i < input.length; i += 1) {
+    const code = input.charCodeAt(i)
+    if (code === 13 || code === 10) return true
+    if (code >= 49 && code <= 57) return true
+  }
+  return false
+}
