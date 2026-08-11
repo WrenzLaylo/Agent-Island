@@ -21,6 +21,7 @@ import {
 import { canApproveRequest } from '@shared/approval-guard'
 import type { AgentSessionRecord, SessionPromptRecord } from '@shared/session-registry'
 import { buildSessionRows } from '@shared/session-list'
+import { radiusForSize } from '@shared/surface-radius'
 import { IslandShell, type IslandPanel } from './components/IslandShell'
 
 function isVisibleActivity(status: IslandSnapshot['agents'][AgentId]['status']): boolean {
@@ -723,6 +724,36 @@ export function App() {
    * reset whenever the intended size changes, so it re-measures per card rather
    * than accumulating.
    */
+  /**
+   * Corner radius, tracked from the viewport rather than from `size`.
+   *
+   * `size` is the *target*; the window travels there over up to ~380ms driven
+   * by the spring in the main process. Reading the viewport instead means the
+   * radius is whatever the current shape actually needs on every frame, so the
+   * corner flows with the morph instead of popping when a class changes.
+   */
+  const [surfaceRadius, setSurfaceRadius] = useState(() =>
+    radiusForSize(window.innerWidth, window.innerHeight)
+  )
+  useEffect(() => {
+    let frame = 0
+    const measure = () => {
+      frame = 0
+      setSurfaceRadius(radiusForSize(window.innerWidth, window.innerHeight))
+    }
+    const onResize = () => {
+      // Coalesce to one read per frame: the main process pushes bounds at the
+      // panel's refresh rate, and a synchronous read per event would thrash.
+      if (frame === 0) frame = window.requestAnimationFrame(measure)
+    }
+    window.addEventListener('resize', onResize)
+    measure()
+    return () => {
+      window.removeEventListener('resize', onResize)
+      if (frame !== 0) window.cancelAnimationFrame(frame)
+    }
+  }, [])
+
   const [overflowPad, setOverflowPad] = useState(0)
   useEffect(() => setOverflowPad(0), [size.width, size.height])
 
@@ -1128,6 +1159,7 @@ export function App() {
   return (
     <div
       className={`stage ${isDragging ? 'is-dragging' : ''}`}
+      style={{ ['--surface-radius' as string]: `${surfaceRadius}px` }}
       data-reduced-motion={settings.reducedMotion ? 'true' : 'false'}
       data-platform={window.agentIsland?.platform ?? 'unknown'}
       onMouseEnter={onMouseEnter}

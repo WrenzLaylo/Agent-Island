@@ -143,16 +143,19 @@ select:focus-visible,
   font-size: var(--fs-md);
 }
 
-.island-surface.view-compact {
-  border-radius: var(--r-full);
-}
-
-.island-surface.view-dock {
-  border-radius: 50%;
-}
-
-.island-surface:not(.view-compact):not(.view-dock) {
-  border-radius: var(--r-lg);
+/*
+ * One radius for every view, derived from the surface's live size in
+ * `radiusForSize` and published as --surface-radius.
+ *
+ * These used to be three rules — 999px pill, 50% orb, 18px card — swapped by
+ * class. The geometry springs for up to ~380ms while a class change lands in a
+ * single frame, so the corner popped part-way through every morph. Driving it
+ * from the measured size means it is correct on every frame by construction,
+ * with no duration to keep in step with the main process. The fallback covers
+ * the first paint, before the viewport has been measured.
+ */
+.island-surface {
+  border-radius: var(--surface-radius, var(--r-lg));
 }
 
 /* Idle is meant to be almost invisible: a black shape with no outline at all. */

@@ -42,6 +42,15 @@ import type {
   TerminalInputPrompt
 } from '../shared/contracts'
 import { isAgentId } from '../shared/pty-types'
+import {
+  axisSettled,
+  frameIntervalMs,
+  moveDistance,
+  omegaForDistance,
+  stepSpringAxis,
+  SPRING_SUB_STEP,
+  type SpringAxis
+} from '../shared/spring'
 
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
@@ -186,36 +195,13 @@ interface IslandBounds {
 }
 
 /**
- * Critically damped spring, integrated at a fixed sub-step so the result is
- * identical regardless of how late a frame lands. `zeta = 1` means it settles
- * without overshoot, which is what a morphing container should do — an
- * under-damped spring makes the pill look like it bounces off its own edges.
- *
  * This is the *only* geometry animation in the app. The renderer no longer
  * springs the surface as well; it just cross-fades its contents, so the frame
  * the user sees is always exactly the OS window.
+ *
+ * The physics itself lives in `shared/spring.ts` so its tuning can be tested
+ * without opening a window.
  */
-const SPRING_OMEGA = 22
-const SPRING_SUB_STEP = 1 / 240
-/** Snap once within a pixel: the last pixel takes as long as the first fifty. */
-const SPRING_EPSILON = 0.9
-
-interface SpringAxis {
-  value: number
-  velocity: number
-  target: number
-}
-
-function stepSpringAxis(axis: SpringAxis, dt: number): void {
-  const displacement = axis.value - axis.target
-  const acceleration = -SPRING_OMEGA * SPRING_OMEGA * displacement - 2 * SPRING_OMEGA * axis.velocity
-  axis.velocity += acceleration * dt
-  axis.value += axis.velocity * dt
-}
-
-function axisSettled(axis: SpringAxis): boolean {
-  return Math.abs(axis.value - axis.target) < SPRING_EPSILON && Math.abs(axis.velocity) < SPRING_EPSILON * SPRING_OMEGA
-}
 
 async function animateIslandTo(target: IslandBounds): Promise<boolean> {
   if (!mainWindow) return false
@@ -242,7 +228,16 @@ async function animateIslandTo(target: IslandBounds): Promise<boolean> {
     { value: start.width, velocity: 0, target: target.width },
     { value: start.height, velocity: 0, target: target.height }
   ]
-  let previous = Date.now()
+  // One stiffness for the whole move, chosen from how far it travels. Per-axis
+  // values would let width settle before height and skew the shape mid-morph.
+  const omega = omegaForDistance(moveDistance(start, target))
+  // Pace to the panel the window is actually on, and read the clock
+  // monotonically: Date.now() can step sideways when the system clock is
+  // corrected, which would inject a bogus dt into the integrator.
+  const frameMs = frameIntervalMs(
+    screen.getDisplayNearestPoint({ x: start.x + start.width / 2, y: start.y + start.height / 2 }).displayFrequency
+  )
+  let previous = Number(process.hrtime.bigint() / 1000n) / 1000
 
   return await new Promise<boolean>((resolve) => {
     const step = () => {
@@ -252,7 +247,7 @@ async function animateIslandTo(target: IslandBounds): Promise<boolean> {
         return
       }
 
-      const now = Date.now()
+      const now = Number(process.hrtime.bigint() / 1000n) / 1000
       // Clamp so a stalled main process (GC, a slow IPC handler) replays at most
       // a tenth of a second of physics instead of teleporting the window.
       const frame = Math.min((now - previous) / 1000, 0.1)
@@ -261,11 +256,11 @@ async function animateIslandTo(target: IslandBounds): Promise<boolean> {
       let remaining = frame
       while (remaining > 0) {
         const dt = Math.min(remaining, SPRING_SUB_STEP)
-        for (const axis of axes) stepSpringAxis(axis, dt)
+        for (const axis of axes) stepSpringAxis(axis, dt, omega)
         remaining -= dt
       }
 
-      const settled = axes.every(axisSettled)
+      const settled = axes.every((axis) => axisSettled(axis, omega))
       const next = settled
         ? target
         : {
@@ -283,7 +278,7 @@ async function animateIslandTo(target: IslandBounds): Promise<boolean> {
         resolve(true)
         return
       }
-      setTimeout(step, 8)
+      setTimeout(step, frameMs)
     }
     setTimeout(step, 0)
   })
