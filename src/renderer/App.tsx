@@ -595,11 +595,22 @@ export function App() {
 
     const offSessionPromptCleared = api.onSessionPromptCleared((prompt) => {
       if (prompt.kind === 'approval' || prompt.kind === 'choice') {
+        /*
+         * A prompt disappearing looks the same however it ended, so the
+         * wrapper records the one the user answered itself. Without that, the
+         * island told people their own answer had been closed or had expired —
+         * wrong, and alarming enough to make them answer twice.
+         */
+        const answeredHere = sessionsRef.current.some(
+          (session) => session.answeredLocallyPromptId === prompt.promptId
+        )
         dispatch({
           type: 'INVALIDATE_APPROVAL',
           requestId: prompt.promptId,
-          message: 'The agent moved on before this was answered.',
-          kind: 'cancelled'
+          message: answeredHere
+            ? 'You answered this in the terminal.'
+            : 'The agent moved on before this was answered.',
+          kind: answeredHere ? 'answered-elsewhere' : 'cancelled'
         })
         return
       }

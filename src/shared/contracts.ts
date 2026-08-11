@@ -106,6 +106,15 @@ export type TransientKind =
   | 'cancelled'
   | 'error'
   | 'completed'
+  /**
+   * Answered in the terminal rather than in the island.
+   *
+   * Distinct from 'cancelled', which means the agent moved on without an
+   * answer. Both look identical from here — the prompt file simply
+   * disappears — so telling the user their own answer "expired" was both
+   * wrong and alarming.
+   */
+  | 'answered-elsewhere'
 
 export interface ApprovalRequest {
   id: string

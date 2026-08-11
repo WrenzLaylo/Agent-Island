@@ -49,6 +49,15 @@ export interface AgentSessionRecord {
    * left the pill claiming "Working" long after a turn had finished.
    */
   busy: boolean
+  /**
+   * The prompt the user answered in the terminal rather than in the island.
+   *
+   * Clearing a prompt looks the same however it ended, so without this the
+   * island reported the user's own answer as the request being closed or
+   * expiring. Set as the prompt is retired and left in place: it is only ever
+   * read against a prompt id that has just disappeared.
+   */
+  answeredLocallyPromptId?: string
 }
 
 /** A prompt the wrapper detected but the island must not answer for the user. */
@@ -178,7 +187,9 @@ export function parseSessionRecord(raw: string): AgentSessionRecord | null {
       cwd: typeof value.cwd === 'string' ? value.cwd : '',
       startedAt: typeof value.startedAt === 'number' ? value.startedAt : Date.now(),
       heartbeatAt: typeof value.heartbeatAt === 'number' ? value.heartbeatAt : 0,
-      busy: value.busy === true
+      busy: value.busy === true,
+      answeredLocallyPromptId:
+        typeof value.answeredLocallyPromptId === 'string' ? value.answeredLocallyPromptId : undefined
     }
   } catch {
     return null

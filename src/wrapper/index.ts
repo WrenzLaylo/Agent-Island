@@ -783,6 +783,13 @@ async function main(): Promise<void> {
     if (livePromptId && approval.pending) {
       const offered = approval.pending.options?.map((option) => option.index) ?? []
       if (answersLivePrompt(text, offered)) {
+        // Record which prompt this was before clearing it. Retiring a prompt
+        // looks identical however it ended, so without this the island reports
+        // the user's own answer as the request closing or expiring.
+        record.answeredLocallyPromptId = livePromptId ?? undefined
+        // Flushed rather than left to the 5s heartbeat: the island reads this
+        // the moment it notices the prompt file has gone, which is far sooner.
+        files.writeSession({ ...record, heartbeatAt: Date.now() })
         approval = {
           pending: null,
           lastFingerprint: approval.pending.fingerprint ?? null,

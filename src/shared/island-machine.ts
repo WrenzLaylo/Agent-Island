@@ -39,7 +39,7 @@ export type IslandEvent =
       type: 'INVALIDATE_APPROVAL'
       requestId: string
       message?: string
-      kind?: Extract<TransientKind, 'expired' | 'cancelled' | 'error'>
+      kind?: Extract<TransientKind, 'expired' | 'cancelled' | 'error' | 'answered-elsewhere'>
     }
   | { type: 'COMPLETE'; message?: string }
   | { type: 'DISMISS_TRANSIENT' }

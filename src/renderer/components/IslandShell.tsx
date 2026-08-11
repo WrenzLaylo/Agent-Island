@@ -167,6 +167,8 @@ function transientTitle(state: IslandSnapshot): string {
       return 'Request expired'
     case 'cancelled':
       return 'Request closed'
+    case 'answered-elsewhere':
+      return 'Answered in terminal'
     case 'error':
       return 'Something needs attention'
     case 'completed':

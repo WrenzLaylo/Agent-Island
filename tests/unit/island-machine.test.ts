@@ -252,3 +252,57 @@ describe('SHOW_APPROVAL', () => {
     expect(reduceIsland(before, { type: 'SHOW_APPROVAL', requestId: 'nope' })).toBe(before)
   })
 })
+
+describe('answered in the terminal', () => {
+  function queued() {
+    let state = createInitialIslandState('/w', 'claude')
+    state = reduceIsland(state, {
+      type: 'ENQUEUE_APPROVAL',
+      request: {
+        id: 'req-1',
+        agentId: 'claude',
+        summary: 's',
+        detail: 'd',
+        cwd: '/w',
+        risk: 'low',
+        createdAt: 1,
+        expiresAt: 9_000_000_000_000,
+        processAlive: true,
+        waitingForInput: true,
+        answered: false,
+        superseded: false
+      }
+    })
+    return state
+  }
+
+  it('reports the user answering it, not the request closing', () => {
+    const state = reduceIsland(queued(), {
+      type: 'INVALIDATE_APPROVAL',
+      requestId: 'req-1',
+      message: 'You answered this in the terminal.',
+      kind: 'answered-elsewhere'
+    })
+    expect(state.transientKind).toBe('answered-elsewhere')
+    expect(state.message).toBe('You answered this in the terminal.')
+  })
+
+  it('still reports a genuine close as cancelled', () => {
+    const state = reduceIsland(queued(), {
+      type: 'INVALIDATE_APPROVAL',
+      requestId: 'req-1',
+      message: 'The agent moved on before this was answered.',
+      kind: 'cancelled'
+    })
+    expect(state.transientKind).toBe('cancelled')
+  })
+
+  it('drops the request from the queue either way', () => {
+    const state = reduceIsland(queued(), {
+      type: 'INVALIDATE_APPROVAL',
+      requestId: 'req-1',
+      kind: 'answered-elsewhere'
+    })
+    expect(state.approvalQueue).not.toContain('req-1')
+  })
+})
