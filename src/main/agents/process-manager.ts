@@ -39,6 +39,18 @@ export interface LaunchSpec {
   command: string
   args: string[]
   cwd: string
+  /**
+   * `args` already carries its own quoting and must not be escaped again.
+   *
+   * True for the `cmd.exe /d /s /c "<path>"` form used to run .cmd and .bat
+   * shims. Both spawners quote array arguments by default, which turns that
+   * into `"\"<path>\""` — cmd.exe then reports "is not recognized as an
+   * internal or external command". Consumers must pass `commandLine` verbatim
+   * (node-pty accepts a string) or set `windowsVerbatimArguments`.
+   */
+  verbatim?: boolean
+  /** The exact Windows command line to use when `verbatim` is set. */
+  commandLine?: string
 }
 
 export interface PtyManagerOptions {
@@ -145,7 +157,9 @@ export class PtyManager extends EventEmitter {
     }
 
     try {
-      const term = this.spawnFn(launch.command, launch.args, {
+      // node-pty takes a raw command line as a string, which is the only way
+      // to stop it re-quoting an already-quoted `cmd /c "..."`.
+      const term = this.spawnFn(launch.command, launch.verbatim && launch.commandLine ? launch.commandLine : launch.args, {
         name: 'xterm-256color',
         cols,
         rows,

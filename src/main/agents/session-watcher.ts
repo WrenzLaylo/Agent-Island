@@ -10,7 +10,7 @@
  * happily try to raise.
  */
 import { EventEmitter } from 'node:events'
-import { existsSync, readdirSync, readFileSync, rmSync, watch, writeFileSync, type FSWatcher } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, rmSync, statSync, watch, writeFileSync, type FSWatcher } from 'node:fs'
 import { join } from 'node:path'
 import {
   isSessionStale,
@@ -24,6 +24,23 @@ import { decisionsDir, ensureRegistryDirs, promptsDir, sessionsDir } from '../..
 import { processAlive } from '../../node/win32-windows'
 
 const POLL_MS = 1000
+
+/**
+ * How long a session file may stay unreadable before it is treated as debris.
+ *
+ * Well beyond any mid-write window, since the cost of waiting is a stale row
+ * and the cost of being wrong is deleting a live session's record.
+ */
+export const CORRUPT_SESSION_TTL_MS = 60_000
+
+/** True when the file exists and was last written longer ago than `ageMs`. */
+function fileOlderThan(path: string, ageMs: number, now: number): boolean {
+  try {
+    return now - statSync(path).mtimeMs > ageMs
+  } catch {
+    return false
+  }
+}
 
 export interface SessionWatcherEvents {
   'session-added': (session: AgentSessionRecord) => void
@@ -119,7 +136,21 @@ export class SessionWatcher extends EventEmitter {
 
     for (const { name, raw } of this.readDir(sessionsDir())) {
       const record = parseSessionRecord(raw)
-      if (!record) continue
+      if (!record) {
+        // Unparseable, so there is no pid to test liveness against, and the
+        // reaper below can never see it — such a file used to survive forever.
+        // Three had accumulated on the development machine, each 291 bytes of
+        // NUL: the shape NTFS leaves behind when a file's length is extended
+        // but its data never reaches disk before a hard shutdown.
+        //
+        // Age is the only usable signal. The window is generous because a
+        // wrapper mid-write is briefly unparseable too, and deleting a live
+        // session's file would strand its prompts.
+        if (fileOlderThan(join(sessionsDir(), name), CORRUPT_SESSION_TTL_MS, now)) {
+          rmSync(join(sessionsDir(), name), { force: true })
+        }
+        continue
+      }
       // A stale heartbeat is only a hint; the pid is the truth. This is what
       // reaps a wrapper that was killed rather than exiting cleanly.
       if (isSessionStale(record, now) && !processAlive(record.pid)) {

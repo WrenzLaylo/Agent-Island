@@ -445,7 +445,9 @@ async function main(): Promise<void> {
 
   let term: IPty
   try {
-    term = ptySpawn(launch.command, launch.args, {
+    // A string command line, not an array, whenever the spec is pre-quoted —
+    // otherwise node-pty escapes the quotes and cmd.exe cannot find the shim.
+    term = ptySpawn(launch.command, launch.verbatim && launch.commandLine ? launch.commandLine : launch.args, {
       name: 'xterm-256color',
       cols,
       rows,
@@ -762,7 +764,18 @@ async function main(): Promise<void> {
     )
     clearInterval(heartbeat)
     files.cleanup()
-    const direct = spawnSync(launch.command, launch.args, { stdio: 'inherit', cwd: launch.cwd })
+    /*
+     * `windowsVerbatimArguments` because a .cmd launch spec already carries its
+     * own quoting: `/d /s /c "C:\path\claude.cmd"`. Node's default escaping
+     * wraps that again into `"\"C:\path\claude.cmd\""`, which cmd.exe rejects
+     * with "is not recognized as an internal or external command" — so this
+     * fallback could not start any npm-installed agent, which is all of them.
+     */
+    const direct = spawnSync(launch.command, launch.args, {
+      stdio: 'inherit',
+      cwd: launch.cwd,
+      windowsVerbatimArguments: launch.verbatim === true
+    })
     process.exit(direct.status ?? 0)
   }
   process.stdin.resume()

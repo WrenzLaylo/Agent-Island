@@ -24,9 +24,13 @@ export function buildLaunchSpec(
 
   if (needsShell) {
     const quoted = `"${executable}"${args.length ? ' ' + args.map(quoteArg).join(' ') : ''}`
+    const shellArgs = ['/d', '/s', '/c', quoted]
     return {
       command: process.env.ComSpec || 'cmd.exe',
-      args: ['/d', '/s', '/c', quoted],
+      args: shellArgs,
+      // Quoted here, so the spawner must not quote it a second time.
+      verbatim: true,
+      commandLine: shellArgs.join(' '),
       cwd
     }
   }
@@ -34,6 +38,7 @@ export function buildLaunchSpec(
   return {
     command: executable,
     args: [...args],
+    verbatim: false,
     cwd
   }
 }
