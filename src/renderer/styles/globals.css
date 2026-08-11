@@ -1308,7 +1308,12 @@ select:focus-visible,
 .decision-list {
   display: grid;
   gap: var(--s-2);
-  margin-top: auto;
+  /*
+   * No auto margin. It existed to pin the actions to the bottom of a window
+   * whose height was fixed regardless of content — reasonable then, dead
+   * space now that the window is measured against what is actually rendered.
+   * A tall command no longer leaves a band of nothing above the options.
+   */
   /*
    * Never scrolls. These are the actions; if one is out of view the card has
    * failed at its only job. The window is sized from the option count and the

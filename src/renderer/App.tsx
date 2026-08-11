@@ -91,6 +91,11 @@ function commandHeight(detail: string): number {
 const APPROVAL_ROW_H = 56
 const MAX_VISIBLE_APPROVAL_ROWS = 5
 
+/** Ignore sub-pixel rounding; only a real shortfall should move the window. */
+const OVERFLOW_EPSILON = 2
+/** However wrong the arithmetic is, the island stays an island. */
+const MAX_OVERFLOW_PAD = 260
+
 /**
  * Window size == visible size. There is no native mask and no frame inset any
  * more, so these are the literal pixels the user sees. Everything sits on a
@@ -705,6 +710,45 @@ export function App() {
     }
   }, [])
 
+  /*
+   * Every window size in this app is arithmetic over hand-kept constants that
+   * have to track the CSS. Twice in one session that arithmetic was wrong: once
+   * reserving space for chrome that had been deleted, once under-reserving so
+   * the options were pushed into a scroll. The constants are a reasonable first
+   * guess and a poor source of truth.
+   *
+   * So the guess is measured against the render. If the content still does not
+   * fit, the window grows by the shortfall. Only ever grows, so it cannot
+   * oscillate; capped, so a runaway measurement cannot fill the screen; and
+   * reset whenever the intended size changes, so it re-measures per card rather
+   * than accumulating.
+   */
+  const [overflowPad, setOverflowPad] = useState(0)
+  useEffect(() => setOverflowPad(0), [size.width, size.height])
+
+  useEffect(() => {
+    if (!settingsLoaded) return
+    /*
+     * Only once the window has stopped moving.
+     *
+     * The resize is a spring animation in the main process, so for a couple of
+     * hundred milliseconds the window is smaller than it is going to be.
+     * Measuring during that reads a shortfall that is about to close on its
+     * own, and the correction then adds height nothing needed — visible as a
+     * band of empty space below the last option.
+     */
+    if (isMorphing) return
+    const timer = window.setTimeout(() => {
+      const scroller = document.querySelector('.approval-card, .choice-card')
+      if (!(scroller instanceof HTMLElement)) return
+      const shortfall = scroller.scrollHeight - scroller.clientHeight
+      if (shortfall > OVERFLOW_EPSILON) {
+        setOverflowPad((pad) => Math.min(pad + shortfall, MAX_OVERFLOW_PAD))
+      }
+    }, 120)
+    return () => window.clearTimeout(timer)
+  }, [size.width, size.height, overflowPad, settingsLoaded, isMorphing])
+
   useEffect(() => {
     if (!settingsLoaded) return
     const api = window.agentIsland
@@ -714,14 +758,14 @@ export function App() {
     // A rejected resize must still release the morph lock, otherwise every
     // control in the island stays permanently inert behind `is-morphing`.
     void api
-      .resize(size.width, size.height)
+      .resize(size.width, size.height + overflowPad)
       .catch((error: unknown) => {
         console.error('Island resize failed:', error)
       })
       .finally(() => {
         if (resizeRunRef.current === run) setIsMorphing(false)
       })
-  }, [size.width, size.height, settingsLoaded])
+  }, [size.width, size.height, overflowPad, settingsLoaded])
 
   /**
    * Retract an island that opened without being asked for.
