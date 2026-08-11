@@ -66,6 +66,29 @@ export interface ClaudeApprovalDetection {
 
 /** "Do you want to proceed?" / "…make this edit to x.ts?" / "…create x.ts?" */
 const QUESTION_RE = /^Do you want to\b.*\?$/i
+
+/**
+ * Other openers Claude Code uses for the same interactive list — plan mode's
+ * "Would you like to proceed?" being the one that left the island blind to
+ * every plan approval.
+ *
+ * These are deliberately *not* treated the same as `QUESTION_RE`. Anchoring on
+ * one exact sentence is brittle, but relaxing the wording outright is worse:
+ * Claude writes "Which approach would you prefer?" above a numbered list in
+ * ordinary prose constantly, and matching that would raise a card for
+ * something the user was only reading. So a relaxed opener additionally
+ * requires the selection caret — see `MARKED_CHOICE_RE`.
+ */
+const ALT_QUESTION_RE = /^(?:Would you like to|Ready to|Shall I|Should I)\b.*\?$/i
+
+/**
+ * A numbered row carrying the caret Claude draws on the highlighted option.
+ *
+ * `>` and `*` are excluded on purpose: `> 1. Quoted` and `* 1. Bulleted` are
+ * ordinary markdown, and accepting them would undo the protection this exists
+ * to provide. Same reasoning as `MARKED_ROW_RE` in shared/stalled-prompt.ts.
+ */
+const MARKED_CHOICE_RE = /^\s*[❯›]\s*\d+[.)]\s+\S/
 const CHOICE_LINE_RE = /^\s*[❯›>*]?\s*(\d+)\.\s*(.+?)\s*$/
 const YES_RE = /^Yes$/i
 /** Session-scoped: "allow all edits during this session", "for this session". */
@@ -142,11 +165,20 @@ export function detectClaudeApprovalPanel(rawOutput: string): ClaudeApprovalDete
   }
   const lines = rawLines.map(cleanUiLine)
 
+  /*
+   * The caret is what separates an interactive list from a numbered list in
+   * prose, so it is what licenses the relaxed openers. Tested against the raw
+   * lines: `cleanUiLine` strips box drawing, and on a panel with no border the
+   * caret can sit in the leading run it trims.
+   */
+  const hasMarkedChoice = rawLines.some((line) => MARKED_CHOICE_RE.test(line))
+
   // Work backwards: only the newest panel is live, anything earlier is
   // scrollback from a request that has already been answered.
   let questionLine = -1
   for (let i = lines.length - 1; i >= 0; i -= 1) {
-    if (QUESTION_RE.test(lines[i])) {
+    const line = lines[i]
+    if (QUESTION_RE.test(line) || (hasMarkedChoice && ALT_QUESTION_RE.test(line))) {
       questionLine = i
       break
     }

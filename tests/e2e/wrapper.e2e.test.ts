@@ -236,6 +236,47 @@ describe('wrapper end to end', () => {
     expect(optionIndexes(prompt.options)).toEqual([1, 2, 3])
   })
 
+  it('raises a plan-mode prompt as a choice, not an approval', async () => {
+    // Plan mode asks "Would you like to proceed?", which the detector used to
+    // ignore entirely, so every plan approval was invisible to the island.
+    const plan = [
+      'Would you like to proceed?',
+      '❯ 1. Yes, and auto-accept edits',
+      '  2. Yes, and manually approve edits',
+      '  3. No, keep planning',
+      ''
+    ].join(NL)
+
+    run = new WrapperRun('claude')
+    run.start([
+      { type: 'sleep', ms: 400 },
+      { type: 'emit', text: plan },
+      { type: 'waitForInput', timeoutMs: 30_000 }
+    ])
+
+    const prompt = (await run.waitFor('a prompt file', () => run!.prompts()))[0]
+    // Two of the three rows are a yes, so approve/deny language would misstate
+    // what is being agreed to.
+    expect(prompt.kind).toBe('choice')
+    expect(prompt.options?.map((option) => option.label)).toEqual([
+      'Yes, and auto-accept edits',
+      'Yes, and manually approve edits',
+      'No, keep planning'
+    ])
+
+    run.decide({
+      sessionId: prompt.sessionId,
+      promptId: prompt.promptId,
+      optionIndex: 2,
+      decidedAt: Date.now()
+    })
+    const keys = await run.waitFor('a keystroke', () => {
+      const text = run!.keystrokeText()
+      return text.length > 0 ? text : null
+    })
+    expect(keys).toBe('2')
+  })
+
   it('refuses a digit the agent never offered', async () => {
     run = new WrapperRun('hermes')
     run.start([
