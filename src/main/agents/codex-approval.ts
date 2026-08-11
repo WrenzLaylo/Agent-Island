@@ -13,12 +13,25 @@ export interface DetectedCodexChoice {
   label: string
 }
 
+/** A row exactly as Codex drew it, with the digit that selects it. */
+export interface DetectedCodexOption {
+  index: number
+  label: string
+  keys: string
+}
+
 export interface CodexApprovalDetection {
   kind: 'codex-command' | 'codex-file-change'
   title: string
   command: string
   description: string
   choices: DetectedCodexChoice[]
+  /**
+   * Every row, including ones no permission vocabulary describes. Codex's
+   * cancel row is deliberately unclassified, so a card built from `choices`
+   * alone would offer two ways to say yes and no way to refuse.
+   */
+  options: DetectedCodexOption[]
   fingerprint: string
   risk: RiskLevel
   riskReason: string
@@ -38,19 +51,64 @@ function cleanUiLine(line: string): string {
     .trim()
 }
 
-function responseForChoice(key: ApprovalDecision, label: string, index: number): string {
-  if (key === 'deny') return '\u001b'
-  if (key === 'always' && /\(p\)/i.test(label)) return 'p'
-  if (key === 'once' && /\(y\)/i.test(label)) return 'y'
-  if (key === 'once' && index === 1) return '\r'
-  // Fallback for older Codex builds whose prompt is arrow-driven but numbered.
-  return `${index}\r`
+/**
+ * Send the row's own digit, and nothing else.
+ *
+ * Verified against Codex 0.146.1 (CODEX_APPROVAL_UI_0.146.1.md, sourced to the
+ * rust-v0.146.1 tag). Three separate reasons this is the only safe choice:
+ *
+ *  - Esc is NOT deny. It maps to Cancel -> ReviewDecision::Abort ->
+ *    interrupt_task(), aborting the whole active turn. Sending it for an
+ *    ordinary Deny killed the turn instead of refusing one command.
+ *  - Letter shortcuts are user-configurable, so y/a/p/d/r cannot be assumed.
+ *    A digit is positional and always selects the row Codex actually drew.
+ *  - A digit submits immediately. Appending Enter meant it arrived after the
+ *    overlay had closed and landed in the composer - the same bug fixed for
+ *    Hermes in 4d54eae.
+ */
+function responseForChoice(index: number): string {
+  return `${index}`
 }
 
+/**
+ * Classify a row by what Codex actually means by it.
+ *
+ * Advisory only: the card renders every label verbatim and answers by digit,
+ * so this decides just two things - which row needs the permanent-access
+ * confirmation, and which row stays clickable when approving is unsafe. Both
+ * are safety gates, so getting it wrong still matters.
+ *
+ * Order matters: session-scoped wording must be tested before the persistent
+ * "ask again" wording, which would otherwise swallow it and promise a
+ * permanent grant Codex never offered.
+ */
 function detectChoice(label: string): ApprovalDecision | null {
-  if (/^Yes,\s*proceed/i.test(label)) return 'once'
+  /*
+   * NOT a deny. This is Codex’s cancel action: it aborts the active turn.
+   * Classifying it as deny mislabelled it in the UI and let it through the
+   * deny-stays-clickable gate. Left unclassified so it renders verbatim and
+   * carries no permission semantics.
+   */
+  if (/^No,\s*and tell Codex what to do differently/i.test(label)) return null
+  // The genuine non-aborting refusals.
+  if (/^No,\s*continue without/i.test(label)) return 'deny'
+  if (/^No,\s*but continue without/i.test(label)) return 'deny'
+  if (/^No,\s*and block this host/i.test(label)) return 'deny'
+
+  // Session scope, deliberately ahead of the persistent patterns.
+  if (/\bin this session\b/i.test(label)) return 'session'
+  if (/\bfor this conversation\b/i.test(label)) return 'session'
+  if (/\bfor this session\b/i.test(label)) return 'session'
+  if (/^Yes,\s*and\s+don['’]t ask again for these files/i.test(label)) return 'session'
+
+  // Persistent.
   if (/^Yes,\s*and\s+don['’]t ask again/i.test(label)) return 'always'
-  if (/^No,\s*and tell Codex what to do differently/i.test(label)) return 'deny'
+  if (/\bin the future\b/i.test(label)) return 'always'
+
+  // One-off.
+  if (/^Yes,\s*proceed/i.test(label)) return 'once'
+  if (/^Yes,\s*just this once/i.test(label)) return 'once'
+  if (/^Yes,\s*grant these permissions for this turn/i.test(label)) return 'once'
   return null
 }
 
@@ -114,12 +172,19 @@ export function detectCodexApprovalPanel(rawOutput: string): CodexApprovalDetect
     if (!key) continue
     if (firstChoiceLine < 0) firstChoiceLine = candidate.line
     choices.push({ index: candidate.index, key, label: candidate.label })
-    responseKeys[key] = responseForChoice(key, candidate.label, candidate.index)
+    responseKeys[key] = responseForChoice(candidate.index)
   }
 
-  if (!choices.some((choice) => choice.key === 'once') || !choices.some((choice) => choice.key === 'deny')) {
-    return null
-  }
+  /*
+   * An affirmative plus at least one other row.
+   *
+   * This used to require a classified `deny` as well. Codex's standard command
+   * panel offers no such row — its only refusal is "No, and tell Codex what to
+   * do differently", which is the cancel action and is deliberately left
+   * unclassified. Demanding a deny therefore rejected every real panel.
+   */
+  if (!choices.some((choice) => choice.key === 'once')) return null
+  if (rawChoices.length < 2) return null
   if (firstChoiceLine <= titleLine) return null
 
   const body = lines.slice(titleLine + 1, firstChoiceLine).filter(Boolean)
@@ -174,6 +239,11 @@ export function detectCodexApprovalPanel(rawOutput: string): CodexApprovalDetect
     command,
     description: reason,
     choices,
+    options: rawChoices.map((candidate) => ({
+      index: candidate.index,
+      label: candidate.label,
+      keys: responseForChoice(candidate.index)
+    })),
     fingerprint,
     risk: risk.level,
     riskReason,
@@ -245,6 +315,10 @@ export function updateCodexApprovalTracker(input: {
     source: 'codex-terminal',
     fingerprint: detection.fingerprint,
     choices: detection.choices.map((choice) => choice.key),
+    // Every row Codex drew, so the unclassified cancel row still reaches the
+    // card. Without it the user sees two ways to say yes and no way to refuse.
+    options: detection.options,
+    isPermission: true,
     choiceOptions: detection.choices.map((choice) => ({
       decision: choice.key,
       index: choice.index,

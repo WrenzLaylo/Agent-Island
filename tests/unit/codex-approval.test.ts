@@ -41,17 +41,23 @@ describe('detectCodexApprovalPanel', () => {
     const hit = detectCodexApprovalPanel(COMMAND_PROMPT)
     expect(hit?.kind).toBe('codex-command')
     expect(hit?.command).toContain('curl -L')
-    expect(hit?.responseKeys.once).toBe('y')
-    expect(hit?.responseKeys.always).toBe('p')
-    expect(hit?.responseKeys.deny).toBe('\u001b')
-    expect(hit?.choices.map((choice) => choice.key)).toEqual(['once', 'always', 'deny'])
+    // The row's own digit, not a letter shortcut: bindings are configurable.
+    expect(hit?.responseKeys.once).toBe('1')
+    expect(hit?.responseKeys.always).toBe('2')
+    // No deny row on a standard panel, and never Esc: it aborts the turn.
+    expect(hit?.responseKeys.deny).toBeUndefined()
+    // The third row is Codex's cancel action, deliberately unclassified.
+    expect(hit?.choices.map((choice) => choice.key)).toEqual(['once', 'always'])
+    // It still reaches the card, verbatim, so a refusal remains reachable.
+    expect(hit?.options).toHaveLength(3)
   })
 
   it('detects file-change approvals without inventing persistence', () => {
     const hit = detectCodexApprovalPanel(EDIT_PROMPT)
     expect(hit?.kind).toBe('codex-file-change')
-    expect(hit?.choices.map((choice) => choice.key)).toEqual(['once', 'deny'])
-    expect(hit?.responseKeys.once).toBe('\r')
+    expect(hit?.choices.map((choice) => choice.key)).toEqual(['once'])
+    expect(hit?.options).toHaveLength(2)
+    expect(hit?.responseKeys.once).toBe('1')
   })
 
   it('does not treat old scrollback as a current prompt', () => {
@@ -71,8 +77,8 @@ describe('Codex approval tracker', () => {
     })
     expect(update.raised?.id).toBe('codex-1')
     expect(update.raised?.source).toBe('codex-terminal')
-    expect(update.raised?.choices).toEqual(['once', 'always', 'deny'])
-    expect(resolveCodexResponseKeys(update.state, 'once')).toEqual({ ok: true, keys: 'y' })
+    expect(update.raised?.choices).toEqual(['once', 'always'])
+    expect(resolveCodexResponseKeys(update.state, 'once')).toEqual({ ok: true, keys: '1' })
     expect(resolveCodexResponseKeys(update.state, 'session').ok).toBe(false)
   })
 })

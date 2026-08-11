@@ -142,7 +142,7 @@ Press enter to confirm or esc to cancel
 `)
     expect(requestId).not.toBe('')
     expect(manager.answerApproval('codex', requestId, 'always')).toEqual({ ok: true })
-    expect(writes).toContain('p')
+    expect(writes).toContain('2')
   })
 
   it('rejects unavailable agents', () => {
