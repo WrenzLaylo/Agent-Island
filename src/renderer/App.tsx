@@ -61,7 +61,33 @@ const MAX_VISIBLE_CHOICE_ROWS = 4
  * reserved for after it no longer existed, leaving a wide band of nothing
  * between the folder and the first option.
  */
-const APPROVAL_BASE_H = 232
+const APPROVAL_CHROME_H = 208
+/** One line of the command at --fs-lg with 1.45 leading. */
+const COMMAND_LINE_H = 22
+/** Past this the command scrolls; the options never do. */
+const MAX_COMMAND_LINES = 4
+/** Monospace characters that fit across the command block at 440px wide. */
+const COMMAND_CHARS_PER_LINE = 41
+
+/**
+ * Height of the command block, from the command itself.
+ *
+ * A single constant cannot serve both a one-line command and a wrapped one.
+ * Assuming the short case is what pushed the options into a scroll: the window
+ * was sized for chrome that had grown, so the overflow landed on the decision
+ * list — the one part of this card that must always be reachable without
+ * scrolling, because it is the part you act on.
+ */
+function commandHeight(detail: string): number {
+  const text = (detail ?? '').trim()
+  if (!text) return COMMAND_LINE_H
+  const explicit = text.split('\n')
+  const lines = explicit.reduce(
+    (total, line) => total + Math.max(1, Math.ceil(line.length / COMMAND_CHARS_PER_LINE)),
+    0
+  )
+  return Math.min(Math.max(lines, 1), MAX_COMMAND_LINES) * COMMAND_LINE_H
+}
 const APPROVAL_ROW_H = 56
 const MAX_VISIBLE_APPROVAL_ROWS = 5
 
@@ -77,7 +103,8 @@ function sizeForPresentation(
   panel: IslandPanel,
   quietIdle: boolean,
   sessionRowCount: number,
-  isChoicePrompt: boolean
+  isChoicePrompt: boolean,
+  commandDetailHeight: number
 ): { width: number; height: number } {
   if (panel === 'settings') return { width: 440, height: 600 }
   if (panel === 'onboarding') return { width: 400, height: 380 }
@@ -115,7 +142,10 @@ function sizeForPresentation(
       }
       {
         const rows = Math.min(Math.max(approvalChoiceCount, 2), MAX_VISIBLE_APPROVAL_ROWS)
-        return { width: 440, height: APPROVAL_BASE_H + rows * APPROVAL_ROW_H }
+        return {
+          width: 440,
+          height: APPROVAL_CHROME_H + commandDetailHeight + rows * APPROVAL_ROW_H
+        }
       }
     default:
       return quietIdle ? { width: 116, height: 32 } : { width: 300, height: 52 }
@@ -289,7 +319,8 @@ export function App() {
         panel,
         quietIdle,
         sessionRows.length,
-        approval?.isPermission === false
+        approval?.isPermission === false,
+        commandHeight(approval?.detail ?? '')
       ),
     [
       state.mode,
@@ -297,6 +328,7 @@ export function App() {
       approval?.choices?.length,
       approval?.options?.length,
       approval?.isPermission,
+      approval?.detail,
       panel,
       quietIdle,
       sessionRows.length

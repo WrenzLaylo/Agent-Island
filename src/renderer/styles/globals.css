@@ -567,6 +567,14 @@ select:focus-visible,
   font-size: 14px;
 }
 
+/* Quiet idle: present, identifiable, and easy to ignore. */
+.dock-button .agent-mark.dock-mark-quiet {
+  width: 22px;
+  height: 22px;
+  flex-basis: 22px;
+  opacity: 0.55;
+}
+
 /* Sits *inside* the disc. Anchored to the bounding box corner it was sliced in
    half by the circular surface clip, because a circle has no corner there. At
    6px inset a 14px round badge is tangent to a 48px orb. */
@@ -1175,7 +1183,9 @@ select:focus-visible,
 }
 
 .command-block pre {
-  max-height: 132px;
+  /* Four lines at --fs-lg/1.45. Kept in step with MAX_COMMAND_LINES in
+     App.tsx, which reserves exactly this much window for it. */
+  max-height: 88px;
   margin: 0;
   overflow: auto;
   padding: 0;
@@ -1238,14 +1248,14 @@ select:focus-visible,
   display: grid;
   gap: var(--s-2);
   margin-top: auto;
-  /* Verbatim agent wording is not length-bounded — "Yes, and don't ask again
-     for: <a long prefix>" can wrap to several lines — so the list scrolls
-     rather than pushing itself out of the window. */
-  max-height: 340px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+  /*
+   * Never scrolls. These are the actions; if one is out of view the card has
+   * failed at its only job. The window is sized from the option count and the
+   * command's own height instead, and it is the COMMAND that scrolls when
+   * something has to — it can be re-read, and it carries a title attribute
+   * with the full text.
+   */
+  flex: 0 0 auto;
 }
 
 /* The digit the terminal printed, and literally what gets sent. Matches the
@@ -1290,7 +1300,28 @@ select:focus-visible,
   cursor: not-allowed;
 }
 
+/*
+ * Rows are marked by how much they commit, not by whether they are a "yes".
+ *
+ * Only `.decision-once` was tinted, and the icon colours below it stopped
+ * rendering entirely once the card began showing the agent's own numbered
+ * rows instead of invented ones. The result: a permanent grant and a refusal
+ * looked identical, and the single marked row was the mildest of the three.
+ *
+ * Deny is deliberately NOT red. Refusing is the safe action here, and
+ * colouring it as a hazard would invert the very thing this is meant to
+ * signal. It reads as the neutral way out; the weight sits on what a grant
+ * costs — once, until the session ends, or from now on.
+ */
+.decision-once .decision-index { color: var(--green); background: rgba(95, 211, 154, 0.12); }
+.decision-session .decision-index { color: var(--blue); background: rgba(127, 178, 255, 0.12); }
+.decision-always .decision-index { color: var(--amber); background: rgba(240, 180, 95, 0.14); }
+
 .decision-once { border-color: rgba(95, 211, 154, 0.32); }
+.decision-session { border-color: rgba(127, 178, 255, 0.28); }
+/* The broadest grant carries the strongest edge: it outlives the session. */
+.decision-always { border-color: rgba(240, 180, 95, 0.4); }
+
 .decision-once .decision-icon { color: var(--green); }
 .decision-deny .decision-icon { color: var(--red); }
 

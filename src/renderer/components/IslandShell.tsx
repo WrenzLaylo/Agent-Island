@@ -124,7 +124,12 @@ function statusDescription(active: AgentSnapshot): string {
     case 'error':
       return active.lastError || 'The last session ended unexpectedly.'
     default:
-      return 'No session running. Approvals will appear here.'
+      /*
+       * An empty state is the one screen guaranteed to be read by someone who
+       * does not yet know how the app works. "Approvals will appear here"
+       * described the situation and told them nothing they could act on.
+       */
+      return `Run "island ${active.id}" in a terminal to connect a session.`
   }
 }
 
@@ -287,7 +292,14 @@ export function IslandShell(props: IslandShellProps) {
             aria-label={`Open Agent Island. ${hasApproval ? `${queueCount} approvals waiting.` : `${active.label} ${active.activityLabel}.`}`}
             {...fade}
           >
-            {quietIdle ? null : (
+            {/*
+              Quiet idle rendered an empty black circle — no agent, no sign the
+              app was even running. The mark stays, dimmed: identity is the one
+              thing worth keeping when everything else is stripped away.
+            */}
+            {quietIdle ? (
+              <AgentMark agentId={active.id} mini className="dock-mark-quiet" />
+            ) : (
               <>
                 <DockRing status={hasApproval ? 'waiting' : active.status} />
                 <AgentMark agentId={active.id} mini />
