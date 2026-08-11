@@ -12,7 +12,10 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
-    "start": "electron-vite preview"
+    "start": "electron-vite preview",
+    "icon": "node scripts/make-icon.mjs",
+    "package": "npm run build && electron-builder --win",
+    "package:dir": "npm run build && electron-builder --win --dir"
   },
   "dependencies": {
     "framer-motion": "^12.23.12",
@@ -27,10 +30,12 @@
     "@types/react-dom": "^19.1.7",
     "@vitejs/plugin-react": "^4.7.0",
     "electron": "^37.2.6",
+    "electron-builder": "^26.15.3",
     "electron-rebuild": "^3.2.9",
     "electron-vite": "^4.0.0",
     "typescript": "^5.9.2",
     "vite": "^7.1.2",
     "vitest": "^3.2.4"
-  }
+  },
+  "author": "WrenzLaylo"
 }

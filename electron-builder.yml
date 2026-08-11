@@ -1,0 +1,68 @@
+appId: com.wrenzlaylo.agent-island
+productName: Agent Island
+copyright: Copyright © 2026 WrenzLaylo
+
+directories:
+  output: release
+  buildResources: build
+
+# electron-vite emits everything the app needs into out/. package.json comes
+# along because Electron reads `main` from it at startup.
+files:
+  - out/**
+  - package.json
+  - '!**/*.map'
+  - '!**/*.ts'
+
+asar: true
+
+# node-pty ships prebuilt binaries (node_modules/node-pty/prebuilds/win32-x64),
+# and both runtimes that matter already load them unrebuilt: the Electron app
+# and the plain-node wrapper. Rebuilding would demand a full Visual Studio
+# toolchain on every machine that packages this, to produce a binary that is
+# already present.
+npmRebuild: false
+
+# Two things must exist as real files on disk rather than inside the archive.
+asarUnpack:
+  # node-pty is a native module. Windows cannot load a .node from an asar, and
+  # without it no agent session can start at all.
+  - '**/node_modules/node-pty/**'
+  # The shims prefer plain `node`, which knows nothing about asar. Keeping an
+  # unpacked copy lets both node and Electron load the wrapper — see
+  # `wrapperPath()` in src/main/agents/shell-shims.ts.
+  #
+  # The whole of out/main, not just wrapper.js: the build is code-split, and
+  # the wrapper requires ./chunks/contracts-*.js at runtime. Unpacking only the
+  # entry point produced a wrapper that existed but could not start —
+  # "Cannot find module './chunks/contracts-….js'" — which the shim would have
+  # treated as a working install. Listing the directory also means a future
+  # chunk cannot reintroduce the same failure. Electron still resolves these
+  # transparently when loading index.js from the archive.
+  - out/main/**
+
+win:
+  icon: build/icon.ico
+  target:
+    - target: nsis
+      arch: [x64]
+    # A no-install copy, which is also the easiest way to try a build without
+    # disturbing an existing installation.
+    - target: portable
+      arch: [x64]
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Agent Island
+  # The app owns its own start-at-login setting (see src/main/login-item.ts).
+  # An installer checkbox writing a second entry would leave the tray toggle
+  # unable to report on it, which is the failure this project just fixed.
+  runAfterFinish: true
+
+# No code signing configured. Unsigned Windows builds show a SmartScreen
+# "unrecognised app" warning on first run, which is expected rather than a
+# build failure; signing needs a certificate that cannot live in the repo.

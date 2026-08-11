@@ -14,3 +14,4 @@ coverage
 # 79MB, and it carries its own .git, so committing it produced a broken
 # gitlink rather than files. Kept on disk, out of the repository.
 .codex-source-0.146.1/
+release/

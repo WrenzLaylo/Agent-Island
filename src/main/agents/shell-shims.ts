@@ -16,7 +16,7 @@ import { app } from 'electron'
 import { execFileSync } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, sep } from 'node:path'
 
 const BEGIN = '# >>> agent-island shims >>>'
 const END = '# <<< agent-island shims <<<'
@@ -27,10 +27,25 @@ export interface ShimResult {
   errors: string[]
 }
 
-/** Absolute path to the built wrapper entry point. */
+/**
+ * Absolute path to the built wrapper entry point.
+ *
+ * In a packaged build `app.getAppPath()` points inside `app.asar`. Electron can
+ * read that, but the shims prefer plain `node` when it is on PATH, and node
+ * knows nothing about asar — it would report the wrapper as missing and the
+ * shim would fail open to the bare agent, silently costing the user every
+ * feature this app provides.
+ *
+ * `asarUnpack` in electron-builder.yml keeps a real copy on disk beside the
+ * archive; this returns that copy whenever it exists, so both runtimes can
+ * load it.
+ */
 function wrapperPath(): string {
   // out/main/wrapper.js next to out/main/index.js in both dev and packaged runs.
-  return join(app.getAppPath(), 'out', 'main', 'wrapper.js')
+  const packed = join(app.getAppPath(), 'out', 'main', 'wrapper.js')
+  const unpacked = packed.replace(`app.asar${sep}`, `app.asar.unpacked${sep}`)
+  if (unpacked !== packed && existsSync(unpacked)) return unpacked
+  return packed
 }
 
 function electronPath(): string {
