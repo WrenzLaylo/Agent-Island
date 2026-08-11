@@ -535,6 +535,35 @@ select:focus-visible,
 @keyframes dock-spin { to { transform: rotate(360deg); } }
 @keyframes dock-breathe { 50% { opacity: 0.4; } }
 
+/*
+ * The orb is already the container, so the mark drops its own tile.
+ *
+ * The docked state reused the `mini` mark — a 20px tile sized for a session
+ * row — inside a 56px disc, which put the glyph at roughly 12px with a
+ * rounded *square* of border and background around it. A letter survived that;
+ * a real logo did not, and the square read as a box inside a circle.
+ *
+ * 30px inside the ring's ~46px clear area leaves even breathing room, and the
+ * logo fills the mark rather than being inset again.
+ */
+.dock-button .agent-mark {
+  width: 30px;
+  height: 30px;
+  flex-basis: 30px;
+  border-color: transparent;
+  background: transparent;
+  border-radius: 0;
+}
+
+.dock-button .agent-logo {
+  width: 100%;
+  height: 100%;
+}
+
+.dock-button .agent-glyph {
+  font-size: 14px;
+}
+
 /* Sits *inside* the disc. Anchored to the bounding box corner it was sliced in
    half by the circular surface clip, because a circle has no corner there. At
    6px inset a 14px round badge is tangent to a 48px orb. */
