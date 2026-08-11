@@ -58,9 +58,57 @@ to use`.
 
 ### Signing
 
-Not configured. Unsigned Windows builds show a SmartScreen "unrecognised app"
-warning on first run — expected, not a build failure. Signing needs a
-certificate, which cannot live in the repo.
+Driven by environment variables, never by a path in the config:
+
+```sh
+CSC_LINK=build/dev-cert.pfx
+CSC_KEY_PASSWORD=…
+npm run package
+```
+
+With them unset the build is unsigned and succeeds. Naming a certificate file
+in `electron-builder.yml` would make the build *fail* for anyone without that
+file, including a fresh clone.
+
+Note that electron-builder logs `signing with signtool.exe` during the
+resource-edit step whether or not a certificate is configured. It is not
+evidence of a signature. Check properly:
+
+```powershell
+Get-AuthenticodeSignature 'release\win-unpacked\Agent Island.exe' | Select Status
+```
+
+#### Self-signed, for your own machines
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\make-dev-cert.ps1
+```
+
+It writes `build/dev-cert.pfx` (git-ignored) and prints the one command you
+must run yourself, elevated, to trust it. **Until the certificate is in
+`LocalMachine\Root`, signed builds still warn — including on the machine that
+made them.**
+
+Trusting it makes that machine accept any binary signed with that key, so the
+`.pfx` is a credential. This does nothing for anyone else's machine.
+
+#### Distributing to other people
+
+Since June 2023, CA/Browser Forum rules require code-signing keys to sit on
+FIPS 140-2 Level 2 hardware — a USB token or a cloud HSM. Buying a certificate
+and dropping a `.pfx` into CI is no longer possible; guides that describe it
+predate the change.
+
+| Route | Cost | Notes |
+|---|---|---|
+| Azure Trusted Signing | ~$10/mo | Cloud, no token, `win.azureSignOptions` |
+| OV certificate | ~$200–400/yr | Hardware token; awkward to automate |
+| EV certificate | ~$400–700/yr | The only route with immediate SmartScreen reputation |
+
+Signing and reputation are separate. An OV certificate removes "unknown
+publisher", but a new installer still starts with no SmartScreen reputation
+and can keep warning until downloads accumulate. Only EV avoids that on day
+one.
 
 ### Start at login
 

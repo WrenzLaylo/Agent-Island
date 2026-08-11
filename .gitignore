@@ -15,3 +15,6 @@ coverage
 # gitlink rather than files. Kept on disk, out of the repository.
 .codex-source-0.146.1/
 release/
+build/*.pfx
+build/*.cer
+build/*.p12

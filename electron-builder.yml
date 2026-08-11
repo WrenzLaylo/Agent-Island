@@ -63,6 +63,17 @@ nsis:
   # unable to report on it, which is the failure this project just fixed.
   runAfterFinish: true
 
-# No code signing configured. Unsigned Windows builds show a SmartScreen
-# "unrecognised app" warning on first run, which is expected rather than a
-# build failure; signing needs a certificate that cannot live in the repo.
+# Signing is driven by environment, not by this file:
+#
+#   CSC_LINK          path to a .pfx (or its base64)
+#   CSC_KEY_PASSWORD  its password
+#
+# Deliberately not a `signtoolOptions.certificateFile` entry here. Naming a
+# file in the config makes the build *fail* whenever that file is absent,
+# which would break `npm run package` for anyone without a certificate --
+# including a fresh clone. With the variables unset the build is simply
+# unsigned, exactly as before.
+#
+# `scripts/make-dev-cert.ps1` creates a self-signed certificate for local use.
+# That only silences the warning on machines that trust it; distributing to
+# anyone else needs a real certificate. See docs/packaging.md.
