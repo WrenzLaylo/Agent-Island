@@ -282,3 +282,62 @@ export function processAlive(pid: number): boolean {
     return (error as NodeJS.ErrnoException).code === 'EPERM'
   }
 }
+
+/**
+ * Find the window of the nearest ancestor process that owns one.
+ *
+ * The title handshake cannot work for an editor-hosted terminal: VS Code drives
+ * its window title from the active file, so the OSC sequence the wrapper writes
+ * never reaches it. Those sessions therefore registered with `hwnd: null`, and
+ * handoff could only tell the user to switch across manually.
+ *
+ * Process ancestry answers it directly instead of by guessing at text. Walking
+ * up from the wrapper reaches the shell, then the terminal or editor hosting
+ * it, and the first ancestor with a visible main window is the window to raise.
+ *
+ * Bounded to `maxDepth` hops: a broken parent chain, or a process reparented to
+ * the session leader, would otherwise walk to the root of the tree and raise
+ * something entirely unrelated.
+ */
+export async function findAncestorWindow(
+  pid: number,
+  maxDepth = 6
+): Promise<FoundWindow | null> {
+  if (process.platform !== 'win32' || !Number.isFinite(pid)) return null
+
+  const out = await runPowerShell(`
+$ErrorActionPreference = 'SilentlyContinue'
+${WIN32_TYPE}
+$current = ${Math.trunc(pid)}
+for ($hop = 0; $hop -lt ${Math.trunc(maxDepth)}; $hop++) {
+  $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$current"
+  if (-not $proc) { break }
+  $parent = $proc.ParentProcessId
+  if (-not $parent -or $parent -eq 0 -or $parent -eq $current) { break }
+  $owner = Get-Process -Id $parent -ErrorAction SilentlyContinue
+  if ($owner -and $owner.MainWindowHandle -ne 0) {
+    $sb = New-Object System.Text.StringBuilder 256
+    [void][AIWin]::GetClassNameW($owner.MainWindowHandle, $sb, 256)
+    $cls = $sb.ToString()
+    Write-Output ("{0}|{1}|{2}|{3}" -f [int64]$owner.MainWindowHandle, $cls, $parent, $owner.MainWindowTitle)
+    break
+  }
+  $current = $parent
+}
+`)
+
+  const line = out
+    .split(/\r?\n/)
+    .map((value) => value.trim())
+    .find(Boolean)
+  if (!line) return null
+
+  const [hwnd, className, ownerPid, ...rest] = line.split('|')
+  const found: FoundWindow = {
+    hwnd: Number(hwnd),
+    className: className ?? '',
+    pid: Number(ownerPid),
+    title: rest.join('|')
+  }
+  return Number.isFinite(found.hwnd) && found.hwnd > 0 ? found : null
+}

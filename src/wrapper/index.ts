@@ -59,7 +59,7 @@ import {
   type TerminalKind
 } from '../shared/session-registry'
 import { decisionsDir, ensureRegistryDirs, focusDir, promptsDir, sessionsDir } from '../node/registry-paths'
-import { findWindowsByTitle } from '../node/win32-windows'
+import { findAncestorWindow, findWindowsByTitle } from '../node/win32-windows'
 
 /** Control bytes, named rather than embedded raw in source. */
 const ESC = String.fromCharCode(27)
@@ -189,11 +189,28 @@ async function resolveHostWindow(agentId: AgentId): Promise<{ hwnd: number | nul
   setTitle(agentId)
   writeHandshakeDiagnostic(marker, matches, searchError)
 
-  const hit = matches[0]
+  /*
+   * Fall back to process ancestry when the title handshake finds nothing.
+   *
+   * An editor-hosted terminal cannot be found by title: VS Code drives its
+   * window title from the active file, so the OSC sequence written above never
+   * reaches it. Those sessions registered with hwnd: null and handoff could
+   * only tell the user to switch across by hand.
+   *
+   * The handshake stays primary because it identifies the exact console, which
+   * is what makes per-tab focus possible. Ancestry finds the hosting window
+   * but knows nothing about which tab inside it is ours — better than nothing,
+   * worse than the handshake, so it is only consulted once that has failed.
+   */
+  let hit: (typeof matches)[number] | null = matches[0] ?? null
   if (!hit) {
-    // VS Code panels and unknown emulators land here. The session still
-    // registers; the island will say the window cannot be raised rather than
-    // raising something arbitrary.
+    try {
+      hit = await findAncestorWindow(process.pid)
+    } catch {
+      // Non-fatal: the session still registers without a raisable window.
+    }
+  }
+  if (!hit) {
     const kind: TerminalKind = process.env.TERM_PROGRAM === 'vscode' ? 'vscode' : 'unknown'
     return { hwnd: null, kind, label: kind === 'vscode' ? 'VS Code terminal' : 'Terminal' }
   }
