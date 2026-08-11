@@ -82,7 +82,7 @@ function responseForChoice(index: number): string {
  * "ask again" wording, which would otherwise swallow it and promise a
  * permanent grant Codex never offered.
  */
-function detectChoice(label: string): ApprovalDecision | null {
+export function detectChoice(label: string): ApprovalDecision | null {
   /*
    * NOT a deny. This is Codex’s cancel action: it aborts the active turn.
    * Classifying it as deny mislabelled it in the UI and let it through the
@@ -105,10 +105,12 @@ function detectChoice(label: string): ApprovalDecision | null {
   if (/^Yes,\s*and\s+don['’]t ask again/i.test(label)) return 'always'
   if (/\bin the future\b/i.test(label)) return 'always'
 
-  // One-off.
+  // One-off. "this turn" is Codex's narrowest scope: narrower than a session,
+  // so it maps to `once` rather than `session`.
   if (/^Yes,\s*proceed/i.test(label)) return 'once'
   if (/^Yes,\s*just this once/i.test(label)) return 'once'
-  if (/^Yes,\s*grant these permissions for this turn/i.test(label)) return 'once'
+  if (/\bfor this turn\b/i.test(label)) return 'once'
+  if (/^Yes,\s*provide the requested info/i.test(label)) return 'once'
   return null
 }
 
