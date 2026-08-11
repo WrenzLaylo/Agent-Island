@@ -9,3 +9,8 @@ release
 coverage
 .vite
 *.local
+
+# Codex source tree cloned for the 0.146.1 approval-contract research.
+# 79MB, and it carries its own .git, so committing it produced a broken
+# gitlink rather than files. Kept on disk, out of the repository.
+.codex-source-0.146.1/
