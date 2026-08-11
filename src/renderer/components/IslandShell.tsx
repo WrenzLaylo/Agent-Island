@@ -431,17 +431,27 @@ export function IslandShell(props: IslandShellProps) {
                       approval.terminalLabel
                         ? `${approvalAgent.label} in ${approval.terminalLabel}`
                         : approvalAgent.label,
-                      folderName(approval.cwd),
-                      queueCount > 1 ? `1 of ${queueCount}` : ''
+                      folderName(approval.cwd)
                     ]
                       .filter(Boolean)
                       .join(' · ')}
                   </small>
                 </span>
               </div>
-              <button type="button" className="icon-button" data-no-drag="true" onClick={onCollapse} aria-label="Collapse approval">
-                <CloseIcon />
-              </button>
+              <div className="panel-actions">
+                {/* Promoted out of the grey sub-line. When more than one agent
+                    is blocked, how many are waiting behind this decision is
+                    the most consequential fact on the card — it was the third
+                    item in a dot-separated list at 11px. */}
+                {queueCount > 1 ? (
+                  <span className="queue-position" title={`${queueCount} decisions waiting`}>
+                    1<span className="queue-of">of</span>{queueCount}
+                  </span>
+                ) : null}
+                <button type="button" className="icon-button" data-no-drag="true" onClick={onCollapse} aria-label="Collapse approval">
+                  <CloseIcon />
+                </button>
+              </div>
             </div>
             {isChoicePrompt ? (
               <ChoiceCard

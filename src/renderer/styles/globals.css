@@ -177,7 +177,20 @@ select:focus-visible,
   border-color: transparent;
 }
 
-.island-surface.has-attention {
+/*
+ * Attention colours the edge only where there is nothing else to go on.
+ *
+ * It used to wrap every view, so an open approval card — which already says
+ * "Approval required", carries a risk rule down its command and a count in
+ * its header — was also boxed in amber. That is three signals for one fact,
+ * and it spent the accent colour so widely that amber stopped meaning
+ * anything in particular.
+ *
+ * Collapsed and docked are the states with no room to explain themselves.
+ * They keep it; the panels do not need it.
+ */
+.island-surface.view-compact.has-attention,
+.island-surface.view-dock.has-attention {
   border-color: rgba(240, 180, 95, 0.45);
 }
 
@@ -839,6 +852,31 @@ select:focus-visible,
 }
 
 
+/*
+ * Queue position, in the header where the eye already lands.
+ *
+ * Tabular so it does not shift as the count changes, and amber because a
+ * queue of blocked agents is the one thing on this card that is getting
+ * worse while the user reads it.
+ */
+.queue-position {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
+  padding: 0 var(--s-2);
+  color: var(--amber);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.queue-of {
+  color: var(--text-3);
+  font-weight: 400;
+}
+
 /* ── Choice card (numbered questions, plan mode) ─────────────────────────── */
 
 .choice-card {
@@ -850,21 +888,29 @@ select:focus-visible,
   padding: 0 var(--s-4) var(--s-3);
 }
 
+/*
+ * The question is this card's command: the thing being decided.
+ *
+ * It was --fs-md, the same size as body text elsewhere, while the plan it
+ * refers to sat below in a boxed 11px monospace block. Same inverted
+ * hierarchy the approval card had, on the other surface.
+ */
 .choice-question {
   margin: 0;
   color: var(--text);
-  font-size: var(--fs-md);
+  font-size: var(--fs-lg);
   font-weight: 600;
   line-height: 1.35;
 }
 
+/* Context for the question, set like the command block: a rule rather than a
+   box, so the two surfaces read as one system. */
 .choice-detail {
   max-height: 78px;
   margin: 0;
   overflow: auto;
-  padding: var(--s-2);
-  border-radius: var(--r-sm);
-  background: var(--raise);
+  padding-left: var(--s-3);
+  border-left: 2px solid var(--rule);
   color: var(--text-2);
   font-family: var(--mono);
   font-size: var(--fs-xs);
