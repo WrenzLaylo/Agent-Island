@@ -61,6 +61,10 @@ export interface IslandApi {
   moveWindow: (x: number, y: number) => void
   setPosition: (x: number, y: number) => Promise<boolean>
   finishDrag: () => Promise<IslandWindowLayout>
+  /** Slide the island off the screen edge, or bring it back. */
+  setTucked: (tucked: boolean) => Promise<boolean>
+  isTucked: () => Promise<boolean>
+  onTuckedChanged: (handler: (tucked: boolean) => void) => () => void
   returnHome: () => Promise<IslandWindowLayout>
   getLayout: () => Promise<IslandWindowLayout>
   getBounds: () => Promise<{ x: number; y: number; width: number; height: number } | null>
@@ -140,6 +144,13 @@ const api: IslandApi = {
   moveWindow: (x, y) => ipcRenderer.send('island:move-window', x, y),
   setPosition: (x, y) => ipcRenderer.invoke('island:set-position', x, y),
   finishDrag: () => ipcRenderer.invoke('island:finish-drag'),
+  setTucked: (tucked) => ipcRenderer.invoke('island:set-tucked', tucked),
+  isTucked: () => ipcRenderer.invoke('island:is-tucked'),
+  onTuckedChanged: (handler) => {
+    const listener = (_event: unknown, tucked: boolean) => handler(tucked)
+    ipcRenderer.on('island:tucked-changed', listener)
+    return () => ipcRenderer.removeListener('island:tucked-changed', listener)
+  },
   returnHome: () => ipcRenderer.invoke('island:return-home'),
   getLayout: () => ipcRenderer.invoke('island:get-layout'),
   getBounds: () => ipcRenderer.invoke('island:get-bounds'),

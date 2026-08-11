@@ -265,6 +265,9 @@ export function IslandShell(props: IslandShellProps) {
       className={`island-surface view-${view} ${hasAttention ? 'has-attention' : ''} ${quietIdle ? 'is-quiet-idle' : ''} ${isMorphing ? 'is-morphing' : ''}`}
       data-drag-region="true"
       data-mode={view}
+      /* Lets the surface show what the agent is doing without spending any
+         text on it — see the status rules in globals.css. */
+      data-status={active.status}
     >
       {/* Announce only the state sentence, not the whole subtree — an aria-live
           region wrapped around the entire island re-read every control on every

@@ -201,6 +201,13 @@ export interface IslandSettings {
   onboardingComplete: boolean
   /** Move the agent's terminal to the island's display on handoff. */
   moveTerminalToIsland: boolean
+  /**
+   * Slide the island off the screen edge after a spell of inactivity.
+   *
+   * Off by default: a window that hides itself is startling the first time it
+   * happens, so it should be something the user turns on.
+   */
+  autoTuckIdle: boolean
 }
 
 export const DEFAULT_ISLAND_SETTINGS: IslandSettings = {
@@ -217,7 +224,8 @@ export const DEFAULT_ISLAND_SETTINGS: IslandSettings = {
   quietIdle: true,
   developerDiagnostics: false,
   onboardingComplete: false,
-  moveTerminalToIsland: true
+  moveTerminalToIsland: true,
+  autoTuckIdle: false
 }
 
 export const AGENT_ORDER: AgentId[] = ['claude', 'codex', 'hermes']

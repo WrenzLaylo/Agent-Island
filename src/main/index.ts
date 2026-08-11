@@ -42,6 +42,7 @@ import type {
   TerminalInputPrompt
 } from '../shared/contracts'
 import { isAgentId } from '../shared/pty-types'
+import { tuckedBounds, tuckSideFor } from '../shared/tuck'
 import {
   axisSettled,
   frameIntervalMs,
@@ -76,6 +77,11 @@ const TRAY_ICON =
 /** User-dragged anchor. null = first launch uses a stored display layout or top-centre. */
 let windowAnchor: { x: number; y: number } | null = null
 let dockSide: DockSide | null = null
+/** Parked off the screen edge; see `shared/tuck.ts`. */
+let isTucked = false
+let tuckedSide: DockSide | null = null
+/** Where to put the island back when it untucks. */
+let tuckReturn: { x: number; y: number } | null = null
 let boundsAnimationToken = 0
 let isAnimatingBounds = false
 
@@ -165,7 +171,9 @@ function getIslandBounds(width: number, height: number) {
 }
 
 function saveCurrentLayout(): void {
-  if (!mainWindow || isAnimatingBounds) return
+  // Never persist an off-screen position: the island would launch already
+  // hidden, with no visible way to bring it back.
+  if (!mainWindow || isAnimatingBounds || isTucked) return
   const bounds = mainWindow.getBounds()
   windowAnchor = { x: bounds.x, y: bounds.y }
   const display = screen.getDisplayNearestPoint({
@@ -285,6 +293,16 @@ async function animateIslandTo(target: IslandBounds): Promise<boolean> {
 }
 
 async function resizeIsland(width: number, height: number): Promise<boolean> {
+  /*
+   * A tucked island still changes size as its content changes. Re-running
+   * `getIslandBounds` would clamp it back inside the work area and silently
+   * untuck it, so the tucked position is recomputed for the new size instead.
+   */
+  if (isTucked && tuckedSide && mainWindow) {
+    const area = displayForWindow(width, height).workArea
+    const bounds = mainWindow.getBounds()
+    return animateIslandTo(tuckedBounds({ ...bounds, width, height }, area, tuckedSide))
+  }
   return animateIslandTo(getIslandBounds(width, height))
 }
 
@@ -324,6 +342,40 @@ function moveIsland(x: number, y: number): boolean {
 
   mainWindow.setPosition(nextX, nextY, false)
   windowAnchor = { x: nextX, y: nextY }
+  return true
+}
+
+/**
+ * Slide the island off the edge, or bring it back.
+ *
+ * `windowAnchor` is left untouched while tucked, so returning restores exactly
+ * where the user had put it. `saveCurrentLayout` is likewise skipped: writing
+ * the off-screen position to disk would make the island launch already hidden,
+ * with no visible way to get it back.
+ */
+async function setIslandTucked(next: boolean): Promise<boolean> {
+  if (!mainWindow || next === isTucked) return false
+  const bounds = mainWindow.getBounds()
+  const area = displayForWindow(bounds.width, bounds.height).workArea
+
+  if (next) {
+    const side = tuckSideFor(bounds, area, dockSide)
+    tuckReturn = { x: bounds.x, y: bounds.y }
+    tuckedSide = side
+    isTucked = true
+    await animateIslandTo(tuckedBounds(bounds, area, side))
+  } else {
+    const home = tuckReturn
+    isTucked = false
+    tuckedSide = null
+    tuckReturn = null
+    if (home) {
+      await animateIslandTo({ x: home.x, y: home.y, width: bounds.width, height: bounds.height })
+    } else {
+      await animateIslandTo(getIslandBounds(bounds.width, bounds.height))
+    }
+  }
+  mainWindow?.webContents.send('island:tucked-changed', isTucked)
   return true
 }
 
@@ -481,6 +533,20 @@ function rebuildTrayMenu(): void {
         type: 'checkbox',
         checked: settings.reducedMotion,
         click: (item: { checked: boolean }) => updateAppSettings({ reducedMotion: item.checked })
+      },
+      {
+        // Discoverability for a state that is otherwise only reachable by
+        // waiting: once tucked, the sliver is the only thing left to click.
+        label: isTucked ? 'Bring back from edge' : 'Tuck to edge',
+        click: () => {
+          void setIslandTucked(!isTucked).then(rebuildTrayMenu)
+        }
+      },
+      {
+        label: 'Tuck automatically when idle',
+        type: 'checkbox',
+        checked: settings.autoTuckIdle,
+        click: (item: { checked: boolean }) => updateAppSettings({ autoTuckIdle: item.checked })
       },
       {
         label: 'Preferred dock side',
@@ -768,6 +834,8 @@ function registerIpc(): void {
     return moveIsland(x, y)
   })
 
+  ipcMain.handle('island:set-tucked', (_event: unknown, value: unknown) => setIslandTucked(value === true))
+  ipcMain.handle('island:is-tucked', () => isTucked)
   ipcMain.handle('island:finish-drag', () => finishIslandDrag())
   ipcMain.handle('island:return-home', () => returnIslandHome(false))
   ipcMain.handle('island:get-layout', () => currentLayout())

@@ -93,7 +93,9 @@ function sanitiseSettings(value: Partial<IslandSettings> | undefined): IslandSet
     moveTerminalToIsland:
       typeof raw.moveTerminalToIsland === 'boolean'
         ? raw.moveTerminalToIsland
-        : DEFAULT_ISLAND_SETTINGS.moveTerminalToIsland
+        : DEFAULT_ISLAND_SETTINGS.moveTerminalToIsland,
+    autoTuckIdle:
+      typeof raw.autoTuckIdle === 'boolean' ? raw.autoTuckIdle : DEFAULT_ISLAND_SETTINGS.autoTuckIdle
   }
 }
 

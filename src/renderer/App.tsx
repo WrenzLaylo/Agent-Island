@@ -22,6 +22,7 @@ import { canApproveRequest } from '@shared/approval-guard'
 import type { AgentSessionRecord, SessionPromptRecord } from '@shared/session-registry'
 import { buildSessionRows } from '@shared/session-list'
 import { radiusForSize } from '@shared/surface-radius'
+import { AUTO_TUCK_MS } from '@shared/tuck'
 import { IslandShell, type IslandPanel } from './components/IslandShell'
 
 function isVisibleActivity(status: IslandSnapshot['agents'][AgentId]['status']): boolean {
@@ -754,6 +755,31 @@ export function App() {
     }
   }, [])
 
+  /**
+   * Edge tuck.
+   *
+   * The main process owns the geometry; the renderer owns the only two things
+   * that decide when it should happen — whether the user is pointing at it,
+   * and whether an agent is waiting. `tuckedRef` mirrors the state so the
+   * hover handler can read it without re-subscribing on every change.
+   */
+  const [tucked, setTucked] = useState(false)
+  const tuckedRef = useRef(false)
+  useEffect(() => {
+    tuckedRef.current = tucked
+  }, [tucked])
+  useEffect(() => {
+    let disposed = false
+    void window.agentIsland?.isTucked().then((value) => {
+      if (!disposed) setTucked(value)
+    })
+    const off = window.agentIsland?.onTuckedChanged((value) => setTucked(value))
+    return () => {
+      disposed = true
+      off?.()
+    }
+  }, [])
+
   const [overflowPad, setOverflowPad] = useState(0)
   useEffect(() => setOverflowPad(0), [size.width, size.height])
 
@@ -811,6 +837,31 @@ export function App() {
    * the global shortcut and attention prompts now take focus too.
    */
   const isExpandedPresentation = state.mode !== 'collapsed' || panel !== null
+
+  /**
+   * A tucked island shoves itself back out the moment an agent needs an
+   * answer. Hiding is only safe if it cannot cost the user a prompt — an
+   * approval that nobody sees is worse than an island in the way.
+   */
+  const needsAttention = state.approvalQueue.length > 0 || terminalInput !== null
+  useEffect(() => {
+    if (tucked && needsAttention) void window.agentIsland?.setTucked(false)
+  }, [tucked, needsAttention])
+
+  /**
+   * Tuck itself away once nothing has happened for a while. Gated on the
+   * collapsed presentation so it can never hide a panel the user is reading,
+   * and re-armed by every dependency below, so any activity postpones it.
+   */
+  useEffect(() => {
+    if (!settings.autoTuckIdle || tucked) return
+    if (needsAttention || state.hovered || isExpandedPresentation) return
+    if (dragRef.current?.active) return
+    const timer = window.setTimeout(() => {
+      void window.agentIsland?.setTucked(true)
+    }, AUTO_TUCK_MS)
+    return () => window.clearTimeout(timer)
+  }, [settings.autoTuckIdle, tucked, needsAttention, state.hovered, isExpandedPresentation, state.mode])
   const hasAttention = queueCount > 0 || terminalInput !== null
   useEffect(() => {
     if (!isExpandedPresentation) return
@@ -1002,6 +1053,8 @@ export function App() {
 
   const onMouseEnter = () => {
     dispatch({ type: 'HOVER_ENTER' })
+    // Reaching the sliver is the whole gesture for coming back.
+    if (tuckedRef.current) void window.agentIsland?.setTucked(false)
   }
 
   const onMouseLeave = () => {
