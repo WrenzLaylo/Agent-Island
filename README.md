@@ -107,7 +107,7 @@ Run `island --whoami` in any terminal to see what it resolves there.
 |---|---|
 | Claude | permission panels parsed from the output stream |
 | Codex | known command and file-change panels |
-| Hermes | structured, via the bundled plugin in `plugins/agent-island-bridge` |
+| Hermes | structured, via the bundled plugin in `plugins/agent-island-bridge`, with terminal parsing as fallback |
 
 Only the choices an agent actually offers are answerable. Asking for a
 permanent allowlist on a panel that offers a session-scoped grant is refused
@@ -115,6 +115,16 @@ rather than approximated, and session grants are never presented as permanent.
 
 Claude and Codex adapters parse terminal output, so a future change to their
 prompt wording may need a parser update.
+
+The Hermes bridge is installed by shell integration, alongside the wrapper and
+the shims. It was previously bundled but never installed by anything, so a
+clean machine silently got terminal parsing while this table claimed
+otherwise. `--shim-status` reports the installed and bundled versions, and
+`--bridge-status` reports the bridge alone.
+
+Hermes loads plugins once at startup, so installing or updating the bridge
+reaches only sessions started afterwards. An existing session keeps whatever
+it loaded and stays on terminal parsing until it is restarted.
 
 ## Development
 

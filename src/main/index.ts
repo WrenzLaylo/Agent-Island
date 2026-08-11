@@ -17,6 +17,7 @@ import { SessionWatcher } from './agents/session-watcher'
 import { ensureRegistryDirs, focusDir } from '../node/registry-paths'
 import type { AgentSessionRecord } from '../shared/session-registry'
 import { ApprovalBridgeWatcher, writeDecision } from './agents/approval-bridge'
+import { hermesBridgeStatus, installHermesBridge } from './agents/hermes-bridge'
 import {
   ensureLauncherScripts,
   installShellShims,
@@ -844,6 +845,8 @@ function registerIpc(): void {
   ipcMain.handle('island:install-shims', () => installShellShims())
   ipcMain.handle('island:uninstall-shims', () => removeShellShims())
   ipcMain.handle('island:shim-status', () => shimStatus())
+  ipcMain.handle('island:hermes-bridge-status', () => hermesBridgeStatus())
+  ipcMain.handle('island:install-hermes-bridge', () => installHermesBridge())
 
   ipcMain.handle('island:discover-agents', async () => {
     discoveryCache = await discoverAgents()
@@ -923,7 +926,7 @@ function wireSessionEvents(): void {
  * they do a little filesystem work and exit, and refusing them while the island
  * happens to be open would make them useless exactly when you want them.
  */
-const SHIM_COMMANDS = ['--install-shims', '--remove-shims', '--shim-status']
+const SHIM_COMMANDS = ['--install-shims', '--remove-shims', '--shim-status', '--bridge-status']
 const shimCommand = process.argv.find((arg) => SHIM_COMMANDS.includes(arg))
 
 /**
@@ -949,12 +952,26 @@ app.on('second-instance', () => {
 async function runShimCommand(command: string): Promise<void> {
   loadPersistedStore()
   ensureLauncherScripts()
-  if (command === '--shim-status') {
-    const status = shimStatus()
+  if (command === '--bridge-status') {
+    process.stdout.write(`${JSON.stringify(hermesBridgeStatus(), null, 2)}\n`)
+  } else if (command === '--shim-status') {
+    // The bridge is part of "is integration set up?", so it is reported here
+    // rather than needing a separate command to discover it is missing.
+    const status = { ...shimStatus(), hermesBridge: hermesBridgeStatus() }
     process.stdout.write(`${JSON.stringify(status, null, 2)}\n`)
-  } else {
-    const result = command === '--install-shims' ? installShellShims() : removeShellShims()
+  } else if (command === '--install-shims') {
+    /*
+     * Installing shell integration now installs the Hermes bridge too.
+     *
+     * They were separate, so a clean machine got the wrapper and the shims
+     * and no bridge at all - Hermes silently fell back to terminal parsing
+     * while the README said it was structured. Setting up integration should
+     * mean setting up integration.
+     */
+    const result = { ...installShellShims(), hermesBridge: installHermesBridge() }
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
+  } else {
+    process.stdout.write(`${JSON.stringify(removeShellShims(), null, 2)}\n`)
   }
   app.exit(0)
 }
