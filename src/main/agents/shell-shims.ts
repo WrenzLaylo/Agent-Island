@@ -64,6 +64,11 @@ export function codexHookLauncher(): string {
   return join(launcherDir(), 'codex-hook.cmd')
 }
 
+/** SessionStart / SessionEnd, which publish the session itself. */
+export function claudeSessionHookLauncher(): string {
+  return join(launcherDir(), 'claude-session-hook.cmd')
+}
+
 function wrapperPath(): string {
   // out/main/wrapper.js next to out/main/index.js in both dev and packaged runs.
   const packed = join(app.getAppPath(), 'out', 'main', 'wrapper.js')
@@ -139,7 +144,7 @@ export function ensureLauncherScripts(): string {
    * out/ does not leave the user's settings pointing at a file that is gone.
    * Regenerated here on every launch for exactly that reason.
    */
-  for (const hook of ['claude', 'codex']) writeHookLauncher(dir, exe, hook)
+  for (const hook of ['claude', 'codex', 'claude-session']) writeHookLauncher(dir, exe, hook)
 
   return dir
 }

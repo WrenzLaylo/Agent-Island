@@ -292,3 +292,47 @@ describe('which agent a bridge request belongs to', () => {
     expect(bridgeAgentId('')).toBe('hermes')
   })
 })
+
+describe('publishing the session itself', () => {
+  const SESSION_CMD = 'C:/Users/x/AppData/Roaming/agent-island/bin/claude-session-hook.cmd'
+
+  it('registers SessionStart and SessionEnd', () => {
+    /*
+     * Without these the island answers approvals from the VS Code extension
+     * while still reading "Run island claude in a terminal to connect a
+     * session" — contradicting itself on one screen.
+     */
+    const next = withHookInstalled({}, COMMAND, SESSION_CMD)
+    for (const event of ['SessionStart', 'SessionEnd']) {
+      const entry = next.hooks?.[event]?.at(-1)?.hooks?.[0]
+      expect(entry?.command).toBe(SESSION_CMD)
+      expect(isOurs(entry!)).toBe(true)
+    }
+  })
+
+  it('does not make a session start wait on Agent Island', () => {
+    const entry = withHookInstalled({}, COMMAND, SESSION_CMD).hooks?.SessionStart?.at(-1)?.hooks?.[0]
+    expect(entry?.timeout).toBeLessThanOrEqual(10)
+  })
+
+  it('removes every event it wrote to', () => {
+    // A SessionStart entry left behind would keep publishing sessions long
+    // after the user removed the hook.
+    const removed = withHookRemoved(withHookInstalled({}, COMMAND, SESSION_CMD))
+    expect(removed.hooks).toBeUndefined()
+  })
+
+  it('leaves the user\u2019s own SessionStart hooks alone', () => {
+    const theirs: ClaudeSettings = {
+      hooks: { SessionStart: [{ matcher: '', hooks: [{ type: 'command', command: 'mine.sh' }] }] }
+    }
+    const removed = withHookRemoved(withHookInstalled(theirs, COMMAND, SESSION_CMD))
+    expect(removed.hooks?.SessionStart).toEqual(theirs.hooks?.SessionStart)
+  })
+
+  it('installs only the approval hook when no session command is given', () => {
+    const next = withHookInstalled({}, COMMAND)
+    expect(next.hooks?.SessionStart).toBeUndefined()
+    expect(next.hooks?.PreToolUse).toBeDefined()
+  })
+})

@@ -91,24 +91,55 @@ export function isOurs(entry: HookEntry): boolean {
  * Pure so the merge can be tested against real settings shapes without
  * touching a disk.
  */
-export function withHookInstalled(settings: ClaudeSettings, command: string): ClaudeSettings {
-  const next: ClaudeSettings = { ...settings }
-  const hooks: Record<string, HookMatcher[]> = { ...(next.hooks ?? {}) }
-  const existing = Array.isArray(hooks.PreToolUse) ? hooks.PreToolUse : []
-
-  // Drop any earlier entry of ours, wherever it sits, then re-add. That makes
-  // installing twice idempotent and lets the command path change between
-  // versions without stacking duplicates.
-  const cleaned = existing
+/** Strip our entries from one event, leaving the user's own untouched. */
+function withoutOurs(groups: HookMatcher[] | undefined): HookMatcher[] {
+  if (!Array.isArray(groups)) return []
+  return groups
     .map((group) => ({ ...group, hooks: (group.hooks ?? []).filter((entry) => !isOurs(entry)) }))
     .filter((group) => (group.hooks ?? []).length > 0)
+}
 
-  cleaned.push({
-    matcher: CLAUDE_HOOK_MATCHER,
-    hooks: [{ type: 'command', command: toHookCommand(command), timeout: 130, _source: HOOK_MARKER }]
-  })
+export function withHookInstalled(
+  settings: ClaudeSettings,
+  command: string,
+  sessionCommand?: string
+): ClaudeSettings {
+  const next: ClaudeSettings = { ...settings }
+  const hooks: Record<string, HookMatcher[]> = { ...(next.hooks ?? {}) }
 
-  hooks.PreToolUse = cleaned
+  // Ours are dropped first and re-added, so installing twice is idempotent and
+  // a command path can change between versions without stacking duplicates.
+  hooks.PreToolUse = [
+    ...withoutOurs(hooks.PreToolUse),
+    {
+      matcher: CLAUDE_HOOK_MATCHER,
+      hooks: [{ type: 'command', command: toHookCommand(command), timeout: 130, _source: HOOK_MARKER }]
+    }
+  ]
+
+  /*
+   * SessionStart and SessionEnd publish the session itself, so the island can
+   * show a Claude session it did not launch. Without them it answers approvals
+   * from the VS Code extension while still saying "Run island claude in a
+   * terminal" — contradicting itself on the same screen.
+   *
+   * Short timeout: these only write or delete one small file, and nothing about
+   * a session's start should ever wait on Agent Island.
+   */
+  if (sessionCommand) {
+    for (const event of ['SessionStart', 'SessionEnd']) {
+      hooks[event] = [
+        ...withoutOurs(hooks[event]),
+        {
+          matcher: '',
+          hooks: [
+            { type: 'command', command: toHookCommand(sessionCommand), timeout: 10, _source: HOOK_MARKER }
+          ]
+        }
+      ]
+    }
+  }
+
   next.hooks = hooks
   return next
 }
@@ -116,16 +147,17 @@ export function withHookInstalled(settings: ClaudeSettings, command: string): Cl
 /** Remove only our entry, leaving the user's own hooks exactly as they were. */
 export function withHookRemoved(settings: ClaudeSettings): ClaudeSettings {
   const next: ClaudeSettings = { ...settings }
-  if (!next.hooks || !Array.isArray(next.hooks.PreToolUse)) return next
+  if (!next.hooks) return next
 
   const hooks: Record<string, HookMatcher[]> = { ...next.hooks }
-  const cleaned = hooks.PreToolUse.map((group) => ({
-    ...group,
-    hooks: (group.hooks ?? []).filter((entry) => !isOurs(entry))
-  })).filter((group) => (group.hooks ?? []).length > 0)
-
-  if (cleaned.length > 0) hooks.PreToolUse = cleaned
-  else delete hooks.PreToolUse
+  // Every event we might have written to, not just PreToolUse — leaving a
+  // SessionStart entry behind would keep publishing sessions after removal.
+  for (const event of ['PreToolUse', 'SessionStart', 'SessionEnd']) {
+    if (!Array.isArray(hooks[event])) continue
+    const cleaned = withoutOurs(hooks[event])
+    if (cleaned.length > 0) hooks[event] = cleaned
+    else delete hooks[event]
+  }
 
   // Do not leave an empty `hooks: {}` behind if we emptied it.
   if (Object.keys(hooks).length > 0) next.hooks = hooks
@@ -181,6 +213,7 @@ function writeSettings(path: string, settings: ClaudeSettings): void {
 
 export function installClaudeHook(
   command: string,
+  sessionCommand?: string,
   path = claudeSettingsPath()
 ): { ok: boolean; error?: string } {
   const read = readSettings(path)
@@ -190,7 +223,7 @@ export function installClaudeHook(
     return { ok: false, error: `Could not read ${path}: ${read.error}` }
   }
   try {
-    writeSettings(path, withHookInstalled(read.value, command))
+    writeSettings(path, withHookInstalled(read.value, command, sessionCommand))
     return { ok: true }
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) }

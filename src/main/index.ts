@@ -22,6 +22,7 @@ import { claudeHookStatus, installClaudeHook, uninstallClaudeHook } from './agen
 import { codexHookStatus, installCodexHook, uninstallCodexHook } from './agents/codex-hook-install'
 import {
   claudeHookLauncher,
+  claudeSessionHookLauncher,
   codexHookLauncher,
   ensureLauncherScripts,
   installShellShims,
@@ -587,7 +588,7 @@ function rebuildTrayMenu(): void {
           const status = claudeHookStatus()
           const result = status.installed
             ? uninstallClaudeHook()
-            : installClaudeHook(claudeHookLauncher())
+            : installClaudeHook(claudeHookLauncher(), claudeSessionHookLauncher())
           if (!result.ok) console.error('agent-island: claude hook:', result.error)
           rebuildTrayMenu()
         }
@@ -945,7 +946,7 @@ function registerIpc(): void {
   ipcMain.handle('island:install-codex-hook', () => installCodexHook(codexHookLauncher()))
   ipcMain.handle('island:uninstall-codex-hook', () => uninstallCodexHook())
   ipcMain.handle('island:claude-hook-status', () => claudeHookStatus())
-  ipcMain.handle('island:install-claude-hook', () => installClaudeHook(claudeHookLauncher()))
+  ipcMain.handle('island:install-claude-hook', () => installClaudeHook(claudeHookLauncher(), claudeSessionHookLauncher()))
   ipcMain.handle('island:uninstall-claude-hook', () => uninstallClaudeHook())
   ipcMain.handle('island:set-tucked', (_event: unknown, value: unknown) => setIslandTucked(value === true))
   ipcMain.handle('island:is-tucked', () => isTucked)
