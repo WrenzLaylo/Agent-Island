@@ -16,9 +16,11 @@ import type { AgentDiscoveryResult, DiscoveredAgent } from './agents/discover'
 import { SessionWatcher } from './agents/session-watcher'
 import { ensureRegistryDirs, focusDir } from '../node/registry-paths'
 import type { AgentSessionRecord } from '../shared/session-registry'
-import { ApprovalBridgeWatcher, writeDecision } from './agents/approval-bridge'
+import { ApprovalBridgeWatcher, islandBridgeRoot, writeDecision } from './agents/approval-bridge'
 import { hermesBridgeStatus, installHermesBridge } from './agents/hermes-bridge'
+import { claudeHookStatus, installClaudeHook, uninstallClaudeHook } from './agents/claude-hook-install'
 import {
+  claudeHookLauncher,
   ensureLauncherScripts,
   installShellShims,
   removeShellShims,
@@ -61,6 +63,22 @@ let tray: Tray | null = null
 let discoveryCache: AgentDiscoveryResult | null = null
 const sessionWatcher = new SessionWatcher()
 const bridgeWatcher = new ApprovalBridgeWatcher()
+/**
+ * The Claude Code hook's bridge. Same protocol, different root — see
+ * `islandBridgeRoot`. Kept as a second watcher rather than a second root on
+ * one watcher so either can be stopped without disturbing the other.
+ */
+const hookWatcher = new ApprovalBridgeWatcher(islandBridgeRoot())
+const bridges = [bridgeWatcher, hookWatcher]
+
+/** Locate a pending request across every bridge, with the root to answer on. */
+function findBridgePending(id: string) {
+  for (const watcher of bridges) {
+    const pending = watcher.list().find((item) => item.id === id)
+    if (pending) return { pending, root: watcher.rootPath }
+  }
+  return null
+}
 
 const isDev = !app.isPackaged
 const EDGE_GAP = 8
@@ -516,7 +534,7 @@ function createTray(): void {
  */
 function pendingPromptCounts(): { pendingApprovals: number; terminalPrompts: number } {
   return {
-    pendingApprovals: bridgeWatcher.list().length,
+    pendingApprovals: bridges.reduce((total, watcher) => total + watcher.list().length, 0),
     terminalPrompts: sessionWatcher.listPrompts().length
   }
 }
@@ -550,6 +568,26 @@ function rebuildTrayMenu(): void {
             return
           }
           void checkForUpdates()
+        }
+      },
+      { type: 'separator' },
+      {
+        /*
+         * Lets Agent Island answer for sessions it does not host — the VS Code
+         * extension spawns its own claude.exe, so there is no shell to shim
+         * and no terminal to scrape. Editing the user's global Claude config
+         * is never automatic; this is the only thing that does it.
+         */
+        label: claudeHookStatus().installed
+          ? 'Remove Claude Code hook'
+          : 'Install Claude Code hook…',
+        click: () => {
+          const status = claudeHookStatus()
+          const result = status.installed
+            ? uninstallClaudeHook()
+            : installClaudeHook(claudeHookLauncher())
+          if (!result.ok) console.error('agent-island: claude hook:', result.error)
+          rebuildTrayMenu()
         }
       },
       { type: 'separator' },
@@ -889,6 +927,9 @@ function registerIpc(): void {
     return moveIsland(x, y)
   })
 
+  ipcMain.handle('island:claude-hook-status', () => claudeHookStatus())
+  ipcMain.handle('island:install-claude-hook', () => installClaudeHook(claudeHookLauncher()))
+  ipcMain.handle('island:uninstall-claude-hook', () => uninstallClaudeHook())
   ipcMain.handle('island:set-tucked', (_event: unknown, value: unknown) => setIslandTucked(value === true))
   ipcMain.handle('island:is-tucked', () => isTucked)
   ipcMain.handle('island:finish-drag', () => finishIslandDrag())
@@ -974,23 +1015,27 @@ function registerIpc(): void {
 
   ipcMain.handle('island:quit', () => {
     bridgeWatcher.stop()
+  hookWatcher.stop()
+    hookWatcher.stop()
     sessionWatcher.stop()
     app.quit()
   })
 
-  ipcMain.handle('bridge:list-approvals', () => bridgeWatcher.list())
+  ipcMain.handle('bridge:list-approvals', () => bridges.flatMap((watcher) => watcher.list()))
   ipcMain.handle(
     'bridge:answer-approval',
     async (_event: unknown, request: { requestId?: unknown; decision?: unknown }) => {
       if (!request || typeof request.requestId !== 'string') return { ok: false, error: 'Invalid request' }
       if (!isApprovalDecision(request.decision)) return { ok: false, error: 'Invalid decision' }
-      const pending = bridgeWatcher.list().find((item) => item.id === request.requestId)
-      if (!pending) return { ok: false, error: 'Approval request is no longer pending' }
+      const found = findBridgePending(request.requestId)
+      if (!found) return { ok: false, error: 'Approval request is no longer pending' }
+      const { pending, root } = found
       if (pending.choices?.length && !pending.choices.includes(request.decision)) {
         return { ok: false, error: 'That permission option is not available for this request' }
       }
       try {
-        await writeDecision(request.requestId, request.decision)
+        // Back to the bridge it came from; the hook is polling that directory.
+        await writeDecision(request.requestId, request.decision, root)
         return { ok: true }
       } catch (error) {
         return { ok: false, error: error instanceof Error ? error.message : String(error) }
@@ -1000,13 +1045,18 @@ function registerIpc(): void {
 }
 
 function wireBridgeEvents(): void {
-  bridgeWatcher.on('raised', (request) => {
-    showIsland()
-    mainWindow?.webContents.send('island:approval', request)
-  })
-  bridgeWatcher.on('cleared', (request) => {
-    mainWindow?.webContents.send('island:approval-cleared', request)
-  })
+  // Every bridge feeds the same card. The renderer has no reason to care
+  // whether a request came from the Hermes plugin or the Claude hook — it is
+  // the same question, and answering it writes back to whichever raised it.
+  for (const watcher of bridges) {
+    watcher.on('raised', (request) => {
+      showIsland()
+      mainWindow?.webContents.send('island:approval', request)
+    })
+    watcher.on('cleared', (request) => {
+      mainWindow?.webContents.send('island:approval-cleared', request)
+    })
+  }
 }
 
 function wireSessionEvents(): void {
@@ -1113,6 +1163,7 @@ async function bootstrap(): Promise<void> {
   wireSessionEvents()
   sessionWatcher.start()
   void bridgeWatcher.start()
+  void hookWatcher.start()
   discoveryCache = await discoverAgents()
   createWindow()
   createTray()
@@ -1182,6 +1233,7 @@ app.on('before-quit', (event: { preventDefault(): void }) => {
   tray?.destroy()
   tray = null
   bridgeWatcher.stop()
+  hookWatcher.stop()
   sessionWatcher.stop()
   flushPersistedStore()
   app.exit(0)

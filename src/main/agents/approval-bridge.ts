@@ -43,6 +43,18 @@ function normaliseChoices(choices: BridgePendingFile['choices']): ApprovalDecisi
   return [...new Set(filtered)]
 }
 
+/**
+ * Bridge root for Agent Island's own clients — currently the Claude Code hook.
+ *
+ * Separate from the Hermes plugin's root, which lives under hermes' own
+ * directory. Sharing it would put one agent's requests inside another agent's
+ * data, and make either uninstall take the other's queue with it.
+ */
+export function islandBridgeRoot(): string {
+  const local = process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local')
+  return join(local, 'agent-island', 'bridge')
+}
+
 export function bridgeRoot(): string {
   return join(homedir(), 'AppData', 'Local', 'hermes', 'agent-island', 'bridge')
 }
@@ -155,6 +167,11 @@ export class ApprovalBridgeWatcher extends EventEmitter {
   constructor(root = bridgeRoot()) {
     super()
     this.root = root
+  }
+
+  /** Which bridge this watcher serves; decisions must be written back to it. */
+  get rootPath(): string {
+    return this.root
   }
 
   async start(): Promise<void> {

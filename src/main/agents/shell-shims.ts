@@ -18,6 +18,9 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from
 import { homedir } from 'node:os'
 import { dirname, join, sep } from 'node:path'
 
+/** cmd files need CRLF; kept as a constant so no editor can eat it. */
+const CRLF = String.fromCharCode(13, 10)
+
 const BEGIN = '# >>> agent-island shims >>>'
 const END = '# <<< agent-island shims <<<'
 
@@ -40,6 +43,23 @@ export interface ShimResult {
  * archive; this returns that copy whenever it exists, so both runtimes can
  * load it.
  */
+/**
+ * Absolute path to the built Claude hook, unpacked like the wrapper.
+ *
+ * Claude Code spawns hooks with plain node, which cannot read inside an asar.
+ */
+function claudeHookPath(): string {
+  const packed = join(app.getAppPath(), 'out', 'main', 'claude-hook.js')
+  const unpacked = packed.replace(`app.asar${sep}`, `app.asar.unpacked${sep}`)
+  if (unpacked !== packed && existsSync(unpacked)) return unpacked
+  return packed
+}
+
+/** Stable path the user's settings.json points at, regenerated on every launch. */
+export function claudeHookLauncher(): string {
+  return join(launcherDir(), 'claude-hook.cmd')
+}
+
 function wrapperPath(): string {
   // out/main/wrapper.js next to out/main/index.js in both dev and packaged runs.
   const packed = join(app.getAppPath(), 'out', 'main', 'wrapper.js')
@@ -106,6 +126,30 @@ export function ensureLauncherScripts(): string {
       `ELECTRON_RUN_AS_NODE=1 exec "${toPosix(exe)}" "$wrapper" "$@"`,
       ''
     ].join('\n'),
+    'utf8'
+  )
+
+  /*
+   * The hook launcher is what `~/.claude/settings.json` records, rather than
+   * the build output directly: this path is stable, so an update that moves
+   * out/ does not leave the user's settings pointing at a file that is gone.
+   * Regenerated here on every launch for exactly that reason.
+   */
+  writeFileSync(
+    join(dir, 'claude-hook.cmd'),
+    [
+      '@echo off',
+      `set "AI_HOOK=${claudeHookPath()}"`,
+      'set "AI_NODE="',
+      "for /f \"delims=\" %%i in ('where node 2^>nul') do if not defined AI_NODE set \"AI_NODE=%%i\"",
+      'if defined AI_NODE goto :usenode',
+      'set "ELECTRON_RUN_AS_NODE=1"',
+      `"${exe}" "%AI_HOOK%"`,
+      'goto :eof',
+      ':usenode',
+      '"%AI_NODE%" "%AI_HOOK%"',
+      ''
+    ].join(CRLF),
     'utf8'
   )
 

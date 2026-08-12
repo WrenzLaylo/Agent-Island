@@ -13,7 +13,11 @@ export default defineConfig({
           // agent detectors and must run against Electron's node ABI (node-pty
           // is rebuilt for Electron), so it is launched via
           // ELECTRON_RUN_AS_NODE rather than a separate node install.
-          wrapper: resolve('src/wrapper/index.ts')
+          wrapper: resolve('src/wrapper/index.ts'),
+          // The Claude Code PreToolUse hook. Built here so it can share the
+          // protocol module, and unpacked from the asar like the wrapper --
+          // Claude spawns it with plain node, which cannot read an archive.
+          'claude-hook': resolve('src/hooks/claude-hook.ts')
         }
       }
     }
