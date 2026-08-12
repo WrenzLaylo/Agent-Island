@@ -19,8 +19,10 @@ import type { AgentSessionRecord } from '../shared/session-registry'
 import { ApprovalBridgeWatcher, islandBridgeRoot, writeDecision } from './agents/approval-bridge'
 import { hermesBridgeStatus, installHermesBridge } from './agents/hermes-bridge'
 import { claudeHookStatus, installClaudeHook, uninstallClaudeHook } from './agents/claude-hook-install'
+import { codexHookStatus, installCodexHook, uninstallCodexHook } from './agents/codex-hook-install'
 import {
   claudeHookLauncher,
+  codexHookLauncher,
   ensureLauncherScripts,
   installShellShims,
   removeShellShims,
@@ -590,6 +592,18 @@ function rebuildTrayMenu(): void {
           rebuildTrayMenu()
         }
       },
+      {
+        // Codex's PermissionRequest hook. Same idea, different config file.
+        label: codexHookStatus().installed ? 'Remove Codex hook' : 'Install Codex hook…',
+        click: () => {
+          const status = codexHookStatus()
+          const result = status.installed
+            ? uninstallCodexHook()
+            : installCodexHook(codexHookLauncher())
+          if (!result.ok) console.error('agent-island: codex hook:', result.error)
+          rebuildTrayMenu()
+        }
+      },
       { type: 'separator' },
       {
         label: 'Always on top',
@@ -927,6 +941,9 @@ function registerIpc(): void {
     return moveIsland(x, y)
   })
 
+  ipcMain.handle('island:codex-hook-status', () => codexHookStatus())
+  ipcMain.handle('island:install-codex-hook', () => installCodexHook(codexHookLauncher()))
+  ipcMain.handle('island:uninstall-codex-hook', () => uninstallCodexHook())
   ipcMain.handle('island:claude-hook-status', () => claudeHookStatus())
   ipcMain.handle('island:install-claude-hook', () => installClaudeHook(claudeHookLauncher()))
   ipcMain.handle('island:uninstall-claude-hook', () => uninstallClaudeHook())

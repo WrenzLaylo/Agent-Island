@@ -17,7 +17,8 @@ export default defineConfig({
           // The Claude Code PreToolUse hook. Built here so it can share the
           // protocol module, and unpacked from the asar like the wrapper --
           // Claude spawns it with plain node, which cannot read an archive.
-          'claude-hook': resolve('src/hooks/claude-hook.ts')
+          'claude-hook': resolve('src/hooks/claude-hook.ts'),
+          'codex-hook': resolve('src/hooks/codex-hook.ts')
         }
       }
     }

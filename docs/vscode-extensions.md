@@ -53,21 +53,33 @@ Two things to establish before building this:
    behalf pre-empts that dialog, so the two must not both be live, or the same
    decision gets asked twice.
 
-**Codex: app-server.** The extension is exactly the client app-server exists
-for. That protocol is already understood — see `docs/codex-app-server.md`,
+**Codex: the `PermissionRequest` hook.** Not app-server, which was the first
+answer here and the wrong one — the extension owns that connection and nothing
+can intercept it. Codex has a hooks system (`codex-rs/hooks/`) whose
+`PermissionRequest` event runs in the approval path before any UI is shown and
+can return allow/deny or decline. Declared in `$CODEX_HOME/hooks.json`, so it
+reaches the extension and the TUI alike.
+
+app-server remains the right reference for what the decisions *mean*. That protocol is already understood — see `docs/codex-app-server.md`,
 which documents the request names and the full `ReviewDecision` vocabulary.
 Unlike the terminal case, where app-server was a dead end because it cannot
 observe a session it does not own, here the extension *is* an app-server
 client, and app-server offers a real `denied` decision that the TUI never
 exposes.
 
-## Honest status
+## Status
 
-Neither is implemented. The investigation is done and the approach for each is
-settled, which is the part that was previously guesswork. Both are real
-features rather than fixes, and each is a session of work in its own right.
+Both are implemented, as hooks rather than as protocol clients:
 
-The Claude hook path is the more valuable of the two: it covers the VS Code
-extension *and* would give terminal sessions a structured channel that does not
-depend on scraping panel text at all. It is the closest thing this project has
-to retiring #21's original goal.
+| Agent | Event | Declared in |
+|---|---|---|
+| Claude | `PreToolUse` | `~/.claude/settings.json` |
+| Codex | `PermissionRequest` | `$CODEX_HOME/hooks.json` |
+
+Neither is installed automatically — each edits a config file the user's agent
+depends on, so both are tray actions.
+
+This also retires #21's original goal by a different route than planned. Hooks
+give *terminal* sessions a structured channel too, so approvals no longer have
+to depend on scraping panel text — for these two agents, the scraper becomes
+the fallback rather than the mechanism.

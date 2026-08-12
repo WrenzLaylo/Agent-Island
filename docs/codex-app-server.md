@@ -87,3 +87,24 @@ gating on rows that carry a real scope.
 
 A capture only ever shows the panels that happened to appear while someone was
 watching. The source shows the whole set.
+
+---
+
+## Superseded for approvals
+
+Codex has a **hooks system**, which this document missed. `codex-rs/hooks/`
+defines a `PermissionRequest` event that "runs in the approval path, before
+guardian or user approval UI is shown" and whose handlers "can return a
+concrete allow/deny decision, or decline to decide".
+
+That is the structured interface #21 was looking for, and it does what
+app-server could not: it reaches a session Agent Island does not own,
+including the VS Code extension, because both run the same binary and read the
+same `hooks.json`.
+
+The conclusion above still holds for its own subject — app-server cannot
+observe someone else's session, and its daemon is Unix-only. It was simply the
+wrong place to look.
+
+Implemented in `src/hooks/codex-hook.ts`; the vocabulary here is still the
+authoritative reference for what Codex's decisions mean.

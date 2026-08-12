@@ -48,16 +48,20 @@ export interface ShimResult {
  *
  * Claude Code spawns hooks with plain node, which cannot read inside an asar.
  */
-function claudeHookPath(): string {
-  const packed = join(app.getAppPath(), 'out', 'main', 'claude-hook.js')
+function hookPath(name: string): string {
+  const packed = join(app.getAppPath(), 'out', 'main', name)
   const unpacked = packed.replace(`app.asar${sep}`, `app.asar.unpacked${sep}`)
   if (unpacked !== packed && existsSync(unpacked)) return unpacked
   return packed
 }
 
-/** Stable path the user's settings.json points at, regenerated on every launch. */
+/** Stable paths the agents' config files point at, regenerated on every launch. */
 export function claudeHookLauncher(): string {
   return join(launcherDir(), 'claude-hook.cmd')
+}
+
+export function codexHookLauncher(): string {
+  return join(launcherDir(), 'codex-hook.cmd')
 }
 
 function wrapperPath(): string {
@@ -135,11 +139,18 @@ export function ensureLauncherScripts(): string {
    * out/ does not leave the user's settings pointing at a file that is gone.
    * Regenerated here on every launch for exactly that reason.
    */
+  for (const hook of ['claude', 'codex']) writeHookLauncher(dir, exe, hook)
+
+  return dir
+}
+
+/** One cmd shim per hook; identical but for which script they run. */
+function writeHookLauncher(dir: string, exe: string, agent: string): void {
   writeFileSync(
-    join(dir, 'claude-hook.cmd'),
+    join(dir, `${agent}-hook.cmd`),
     [
       '@echo off',
-      `set "AI_HOOK=${claudeHookPath()}"`,
+      `set "AI_HOOK=${hookPath(`${agent}-hook.js`)}"`,
       'set "AI_NODE="',
       "for /f \"delims=\" %%i in ('where node 2^>nul') do if not defined AI_NODE set \"AI_NODE=%%i\"",
       'if defined AI_NODE goto :usenode',
@@ -152,8 +163,6 @@ export function ensureLauncherScripts(): string {
     ].join(CRLF),
     'utf8'
   )
-
-  return dir
 }
 
 /**
