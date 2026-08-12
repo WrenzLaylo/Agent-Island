@@ -75,6 +75,69 @@ export function clearCall(sessionId: string): void {
 }
 
 /**
+ * Publish or refresh the session record for a hook-hosted session.
+ *
+ * Nothing heartbeats these — there is no wrapper — so a record written once
+ * goes stale within seconds and the island greys the row and stops treating
+ * its prompts as live. Every hook invocation is a proof of life, so every one
+ * of them refreshes the timestamp.
+ *
+ * Also covers the ordering problem: `SessionStart` only fires for sessions
+ * that began after the hooks were installed, so a conversation already open at
+ * install time would never appear at all.
+ */
+export function touchSession(sessionId: string, cwd: string): void {
+  if (!sessionId) return
+  const id = `claude-hook-${sessionId}`
+  try {
+    const dir = join(registryRoot(), 'sessions')
+    mkdirSync(dir, { recursive: true })
+    const target = join(dir, `${id}.json`)
+    const now = Date.now()
+
+    let startedAt = now
+    try {
+      const existing = JSON.parse(readFileSync(target, 'utf8').replace(/^﻿/, '')) as {
+        startedAt?: number
+      }
+      if (typeof existing.startedAt === 'number') startedAt = existing.startedAt
+    } catch {
+      // First sighting of this session.
+    }
+
+    const tmp = `${target}.tmp`
+    writeFileSync(
+      tmp,
+      JSON.stringify(
+        {
+          id,
+          agentId: 'claude',
+          // The Claude process that spawned this hook. Its liveness is what
+          // keeps the record from being reaped.
+          pid: process.ppid,
+          // No window to raise: a webview panel is not something an outside
+          // process can focus, and claiming otherwise would offer a handoff
+          // that cannot work.
+          hwnd: null,
+          terminalKind: 'vscode',
+          terminalLabel: 'Claude Code (no terminal)',
+          cwd,
+          startedAt,
+          heartbeatAt: now,
+          busy: false
+        },
+        null,
+        2
+      ),
+      'utf8'
+    )
+    renameSync(tmp, target)
+  } catch {
+    // A missing row costs visibility, never the session.
+  }
+}
+
+/**
  * Whether an `island` wrapper is already watching this working directory.
  *
  * A terminal session runs the same CLI, so these hooks fire there too. The

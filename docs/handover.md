@@ -58,7 +58,7 @@ the island. That was the actual complaint, twice over.
 dialog never appears; if it returns, the decision is given up and cannot be
 taken back. There is no state where both are live.
 
-## Next: mirror mode (task #25)
+## Mirror mode — built and installed, one open problem
 
 Pair two hooks so nothing is taken:
 
@@ -69,8 +69,38 @@ Pair two hooks so nothing is taken:
 
 The agent's own UI keeps the question everywhere. The island shows it with the
 real command alongside. Terminals keep the dual surface they already had, where
-the island can *also* answer by sending keystrokes. Intercept mode stays
-available as a setting for anyone who wants island-only answering.
+the island can *also* answer by sending keystrokes.
+
+Verified: PreToolUse returns in under a second, the card carries the real
+command, and the duplication guard skips a cwd an `island` wrapper owns
+(0 prompts) while mirroring one it does not (1 prompt).
+
+### The open problem — start here
+
+**Reported: "the detection stops when Claude is not answering."**
+
+Hooks only fire when Claude *acts*. A session sitting on a permission prompt
+produces no events, and nothing else heartbeats these records — there is no
+wrapper. So the one moment the card matters is the one moment the session
+looks idle.
+
+`touchSession` now refreshes the record from both PreToolUse and Notification,
+which makes the stamp as fresh as the last event before the wait. It does not
+survive a long wait.
+
+Two candidate fixes, neither tried:
+
+1. Exempt hook-hosted sessions from staleness entirely. Nothing can heartbeat
+   them, so judging them by heartbeat is the wrong test — liveness should come
+   from `processAlive(pid)` alone. `isSessionStale` is only consulted by the
+   watcher's reaper (which already checks the pid), so the greyed row in the UI
+   is probably a separate code path worth finding first.
+2. Have the island refresh these records itself while their pid lives, since
+   it is the only party awake during the wait.
+
+Also unconfirmed: whether `Notification` fires for **skill** prompts ("Use
+skill /superpowers:…?"). Those are not tool calls, so PreToolUse records no
+command and the card would fall back to its generic sentence.
 
 ## Also open
 

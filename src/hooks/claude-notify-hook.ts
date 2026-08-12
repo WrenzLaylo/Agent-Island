@@ -13,7 +13,7 @@
 import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { readStdin } from './bridge-client'
-import { readCall, registryRoot, wrapperOwns } from './mirror-store'
+import { readCall, registryRoot, touchSession, wrapperOwns } from './mirror-store'
 
 /** Long enough to outlast a decision, short enough not to linger if missed. */
 const PROMPT_TTL_MS = 10 * 60_000
@@ -53,48 +53,18 @@ function main(): void {
   const id = `claude-hook-${sessionId}`
 
   /*
-   * Make sure the session exists before raising anything against it.
+   * Refresh the session before raising anything against it.
    *
    * The island ignores a prompt whose session is not in the registry, and
-   * `SessionStart` only fires for sessions that began *after* the hooks were
-   * installed. A conversation already open at install time would therefore
-   * record calls, raise prompts, and have every one of them silently dropped —
-   * which is exactly what happened on the first live test.
+   * greys a row whose heartbeat has gone stale. Nothing heartbeats these --
+   * there is no wrapper -- and hooks only fire when Claude *acts*, so a
+   * session sitting on a permission prompt is the one case guaranteed to look
+   * dead. That is precisely when the card matters.
    *
-   * Writing it here costs one `existsSync` and removes the ordering
-   * dependency entirely.
+   * This is the last event before the wait, so it is the freshest stamp
+   * available. It does not survive a long wait; see the note in the handover.
    */
-  try {
-    const sessionsDir = join(registryRoot(), 'sessions')
-    const sessionFile = join(sessionsDir, `${id}.json`)
-    if (!existsSync(sessionFile)) {
-      mkdirSync(sessionsDir, { recursive: true })
-      const tmp = `${sessionFile}.tmp`
-      writeFileSync(
-        tmp,
-        JSON.stringify(
-          {
-            id,
-            agentId: 'claude',
-            pid: process.ppid,
-            hwnd: null,
-            terminalKind: 'vscode',
-            terminalLabel: 'Claude Code (no terminal)',
-            cwd: cwd || call?.cwd || '',
-            startedAt: now,
-            heartbeatAt: now,
-            busy: false
-          },
-          null,
-          2
-        ),
-        'utf8'
-      )
-      renameSync(tmp, sessionFile)
-    }
-  } catch {
-    // The prompt below is still written; a missing session only costs the row.
-  }
+  touchSession(sessionId, cwd || call?.cwd || '')
 
   try {
     const dir = join(registryRoot(), 'prompts')

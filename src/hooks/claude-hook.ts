@@ -26,7 +26,7 @@ import {
   toolNeedsApproval
 } from '../shared/claude-hook-protocol'
 import { readStdin } from './bridge-client'
-import { recordCall } from './mirror-store'
+import { recordCall, touchSession } from './mirror-store'
 
 function answer(reason: string): never {
   // Always `ask`: the agent decides how to ask, and the user answers it there.
@@ -41,6 +41,10 @@ function main(): void {
   // Reads and searches are skipped here rather than by a matcher, so a tool
   // this build has never heard of is still recorded and still surfaces.
   if (!toolNeedsApproval(input.toolName)) answer('Read-only tool')
+
+  // Every tool call is proof this session is alive, and the record it keeps
+  // fresh is what stops the island greying the row out.
+  touchSession(input.sessionId, input.cwd)
 
   recordCall(input.sessionId, {
     toolName: input.toolName,
