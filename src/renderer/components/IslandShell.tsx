@@ -168,18 +168,6 @@ function sessionSummary(rows: SessionRow[]): string {
   return `${rows.length} sessions idle`
 }
 
-/**
- * Working is shown by pulsing the agent's own mark.
- *
- * Two earlier attempts were worse: rotating the whole glyph looked like a logo
- * come loose, and a hand-drawn twelve-spoke starburst turned to mush at 20px.
- * Scaling the real mark keeps the official artwork, works at every size, and
- * needs no per-agent special case.
- */
-function markIsWorking(agent: AgentSnapshot, hasApproval: boolean): boolean {
-  return !hasApproval && (agent.status === 'running' || agent.status === 'thinking')
-}
-
 /** Motion only where something is genuinely in flight. */
 function showsActivity(status: AgentSnapshot['status']): boolean {
   return status === 'running' || status === 'thinking' || status === 'waiting'
@@ -322,16 +310,8 @@ export function IslandShell(props: IslandShellProps) {
               <AgentMark agentId={active.id} mini className="dock-mark-quiet" />
             ) : (
               <>
-                {/* No ring while the mark pulses, or the orb carries two
-                    spinners saying the same thing. */}
-                {markIsWorking(active, hasApproval) ? null : (
-                  <DockRing status={hasApproval ? 'waiting' : active.status} />
-                )}
-                <AgentMark
-                  agentId={active.id}
-                  mini
-                  className={markIsWorking(active, hasApproval) ? 'is-working' : ''}
-                />
+                <DockRing status={hasApproval ? 'waiting' : active.status} />
+                <AgentMark agentId={active.id} mini />
                 {/* The badge has to stay round to fit inside the disc, so the
                     count is capped rather than allowed to widen it. */}
                 {hasApproval ? <span className="dock-badge">{queueCount > 9 ? '9+' : queueCount}</span> : null}
@@ -353,11 +333,7 @@ export function IslandShell(props: IslandShellProps) {
             ) : (
               <>
                 <span className="compact-leading" data-drag-region="true">
-                  <AgentMark
-                    agentId={hasApproval && approval ? approval.agentId : active.id}
-                    compact
-                    className={markIsWorking(active, hasApproval) ? 'is-working' : ''}
-                  />
+                  <AgentMark agentId={hasApproval && approval ? approval.agentId : active.id} compact />
                   <StatusDot status={hasApproval ? 'waiting' : active.status} />
                 </span>
                 <span className="compact-copy" data-drag-region="true">

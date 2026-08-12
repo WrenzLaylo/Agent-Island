@@ -558,36 +558,14 @@ select:focus-visible,
 }
 
 /*
- * Working: the agent's own mark pulses.
+ * Working is the ring, and only the ring.
  *
- * Two earlier attempts were worse. Rotating the whole glyph looked like a logo
- * that had come loose from its container. A hand-drawn twelve-spoke starburst
- * matched the reference art but turned to mush at 20px, which is the size it
- * is actually seen at.
- *
- * Scaling the real mark keeps the official artwork at every size, needs no
- * per-agent special case, and still says *who* is working rather than merely
- * that something is. Bounded by real work, so it stops when the agent does.
+ * The mark was made to rotate, then to twinkle, then to pulse. All three were
+ * removed: a logo in motion reads as something coming loose, and at 20px the
+ * detail that made it legible as a mark is exactly the detail that turns to
+ * mush when it moves. The ring says the same thing without touching the one
+ * element whose whole job is to be recognised at a glance.
  */
-.agent-mark.is-working .agent-logo,
-.agent-mark.is-working .agent-glyph {
-  animation: mark-pulse 1.25s ease-in-out infinite;
-  transform-origin: 50% 50%;
-}
-
-@keyframes mark-pulse {
-  0%,
-  100% {
-    transform: scale(0.84);
-    opacity: 0.55;
-  }
-  50% {
-    transform: scale(1.04);
-    opacity: 1;
-  }
-}
-
-/* The generic ring, for agents with nothing to pulse. */
 .dock-ring.status-running circle,
 .dock-ring.status-thinking circle {
   stroke: var(--blue);
