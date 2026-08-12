@@ -60,12 +60,10 @@ can intercept it. Codex has a hooks system (`codex-rs/hooks/`) whose
 can return allow/deny or decline. Declared in `$CODEX_HOME/hooks.json`, so it
 reaches the extension and the TUI alike.
 
-app-server remains the right reference for what the decisions *mean*. That protocol is already understood — see `docs/codex-app-server.md`,
-which documents the request names and the full `ReviewDecision` vocabulary.
-Unlike the terminal case, where app-server was a dead end because it cannot
-observe a session it does not own, here the extension *is* an app-server
-client, and app-server offers a real `denied` decision that the TUI never
-exposes.
+app-server remains the right reference for what those decisions *mean* — see
+`docs/codex-app-server.md` for the full `ReviewDecision` vocabulary — but it is
+not the way in. The extension owns its app-server connection; nothing outside
+can join it.
 
 ## Status
 
