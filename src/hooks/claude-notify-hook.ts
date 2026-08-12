@@ -10,7 +10,7 @@
  * needs you, over there" rather than as buttons — which is the truth: the
  * question lives in the agent's UI and only the agent can answer it.
  */
-import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { readStdin } from './bridge-client'
 import { readCall, registryRoot, wrapperOwns } from './mirror-store'
@@ -51,6 +51,50 @@ function main(): void {
   const call = readCall(sessionId)
   const now = Date.now()
   const id = `claude-hook-${sessionId}`
+
+  /*
+   * Make sure the session exists before raising anything against it.
+   *
+   * The island ignores a prompt whose session is not in the registry, and
+   * `SessionStart` only fires for sessions that began *after* the hooks were
+   * installed. A conversation already open at install time would therefore
+   * record calls, raise prompts, and have every one of them silently dropped —
+   * which is exactly what happened on the first live test.
+   *
+   * Writing it here costs one `existsSync` and removes the ordering
+   * dependency entirely.
+   */
+  try {
+    const sessionsDir = join(registryRoot(), 'sessions')
+    const sessionFile = join(sessionsDir, `${id}.json`)
+    if (!existsSync(sessionFile)) {
+      mkdirSync(sessionsDir, { recursive: true })
+      const tmp = `${sessionFile}.tmp`
+      writeFileSync(
+        tmp,
+        JSON.stringify(
+          {
+            id,
+            agentId: 'claude',
+            pid: process.ppid,
+            hwnd: null,
+            terminalKind: 'vscode',
+            terminalLabel: 'Claude Code (no terminal)',
+            cwd: cwd || call?.cwd || '',
+            startedAt: now,
+            heartbeatAt: now,
+            busy: false
+          },
+          null,
+          2
+        ),
+        'utf8'
+      )
+      renameSync(tmp, sessionFile)
+    }
+  } catch {
+    // The prompt below is still written; a missing session only costs the row.
+  }
 
   try {
     const dir = join(registryRoot(), 'prompts')
