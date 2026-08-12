@@ -1,3 +1,5 @@
+import type { TerminalKind } from './session-registry'
+
 export type AgentId = 'claude' | 'codex' | 'hermes'
 
 export type DockSide = 'left' | 'right'
@@ -97,6 +99,11 @@ export interface TerminalInputPrompt {
   terminalLabel?: string
   /** False when the host exposes no raisable window (VS Code panels). */
   canRaiseWindow?: boolean
+  /**
+   * Which terminal is hosting it. Raising a window and selecting the right tab
+   * inside it are different problems — see `shared/terminal-handoff.ts`.
+   */
+  terminalKind?: TerminalKind
 }
 
 export type TransientKind =

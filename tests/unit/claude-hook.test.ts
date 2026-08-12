@@ -161,9 +161,19 @@ describe('settings.json editing', () => {
     expect(withHookRemoved(settings)).toEqual(settings)
   })
 
-  it('matches every tool rather than a fixed list', () => {
-    // A matcher list here would silently stop covering tools added later.
-    expect(withHookInstalled({}, COMMAND).hooks?.PreToolUse?.at(-1)?.matcher).toBe('')
+  it('only fires for tools that change something', () => {
+    /*
+     * PreToolUse fires before *every* tool call, not only ones needing
+     * permission. An empty matcher put a card in front of every Read and Grep,
+     * which is unusable within seconds of real work.
+     */
+    const matcher = withHookInstalled({}, COMMAND).hooks?.PreToolUse?.at(-1)?.matcher ?? ''
+    for (const tool of ['Bash', 'Write', 'Edit', 'WebFetch']) {
+      expect(new RegExp(`^(?:${matcher})$`).test(tool)).toBe(true)
+    }
+    for (const tool of ['Read', 'Grep', 'Glob', 'TodoWrite']) {
+      expect(new RegExp(`^(?:${matcher})$`).test(tool)).toBe(false)
+    }
   })
 })
 

@@ -20,6 +20,22 @@ import { dirname, join } from 'node:path'
 /** Identifies our entry among the user's own hooks. */
 export const HOOK_MARKER = 'agent-island'
 
+/**
+ * Which tools raise a card.
+ *
+ * Deliberately not every tool. Claude's `PreToolUse` fires before *all* tool
+ * calls, not only ones that need permission, so an empty matcher put an island
+ * card in front of every Read, Grep and Glob — unusable within seconds of real
+ * work. Codex's `PermissionRequest` has no such problem, which is why its
+ * matcher is empty and this one is not.
+ *
+ * Limited to tools that change something or reach the network. The cost of the
+ * narrowing is that a future tool worth guarding is not covered until this
+ * list learns about it; the cost of not narrowing is that nobody can use the
+ * hook at all.
+ */
+export const CLAUDE_HOOK_MATCHER = 'Bash|Write|Edit|MultiEdit|NotebookEdit|WebFetch'
+
 export interface HookEntry {
   type: string
   command: string
@@ -65,9 +81,7 @@ export function withHookInstalled(settings: ClaudeSettings, command: string): Cl
     .filter((group) => (group.hooks ?? []).length > 0)
 
   cleaned.push({
-    // Empty matcher = every tool. The hook decides what it cares about; a
-    // matcher list here would silently stop covering tools added later.
-    matcher: '',
+    matcher: CLAUDE_HOOK_MATCHER,
     hooks: [{ type: 'command', command, timeout: 130, _source: HOOK_MARKER }]
   })
 

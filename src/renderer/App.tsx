@@ -249,7 +249,8 @@ function sessionPromptToHandoff(
     fingerprint: prompt.fingerprint,
     sessionId: session.id,
     terminalLabel: session.terminalLabel,
-    canRaiseWindow: session.hwnd != null
+    canRaiseWindow: session.hwnd != null,
+    terminalKind: session.terminalKind
   }
 }
 

@@ -12,6 +12,7 @@ import type {
 import { AGENT_ORDER } from '@shared/contracts'
 import { AgentMark } from './AgentMark'
 import { folderName, type SessionRow } from '@shared/session-list'
+import { handoffCaveat } from '@shared/terminal-handoff'
 import { AgentTabs } from './AgentTabs'
 import { SessionList } from './SessionList'
 import { ApprovalCard } from './ApprovalCard'
@@ -440,6 +441,14 @@ export function IslandShell(props: IslandShellProps) {
                   </span>
                 </button>
               )}
+              {/* Handoff reaches the window but not always the tab inside it.
+                  Saying so beats a button that quietly does three quarters of
+                  what it promises. */}
+              {handoffCaveat(terminalInput.terminalKind, terminalInput.terminalLabel) ? (
+                <p className="handoff-note">
+                  {handoffCaveat(terminalInput.terminalKind, terminalInput.terminalLabel)}
+                </p>
+              ) : null}
             </div>
           </motion.div>
         ) : state.mode === 'approval' && approval ? (
