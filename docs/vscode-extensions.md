@@ -65,37 +65,46 @@ app-server remains the right reference for what those decisions *mean* — see
 not the way in. The extension owns its app-server connection; nothing outside
 can join it.
 
-## Status: the Claude hook does not work, and was removed
+## Status
 
-Built, and then disproved. Recorded here in full so nobody rebuilds it on the
-same assumption.
+Both agents are reached by hooks rather than by protocol clients:
 
-**Our side works.** Invoking the installed launcher directly raises a card,
-returns a decision, and withdraws its request — verified repeatedly, including
-through the exact `.cmd` the settings file names.
+| Agent | Event | Declared in |
+|---|---|---|
+| Claude | `PreToolUse` | `~/.claude/settings.json` |
+| Codex | `PermissionRequest` | `$CODEX_HOME/hooks.json` |
 
-**Claude Code never calls it.** Tested against a session started well after
-installation, so there is no question of stale settings:
+Neither installs automatically -- each edits a config file the user's agent
+depends on, so both are tray actions.
 
-| Test | Result |
-|---|---|
-| VS Code extension, genuine write-outside-sandbox | extension showed its own dialog |
-| Fresh CLI session (`-p`), `Write` to a permitted path | file written, no card, no pending file |
-| Same, with `--debug` | no mention of hooks in the output at all |
+### The bug that made this look impossible
 
-Things ruled out along the way: it is not the extension's `--settings` layer,
-since the plain CLI ignores it too; not the `_source` marker field, tested with
-it removed; not the config path, since `CLAUDE_CONFIG_DIR` is unset and
-`~/.claude/settings.json` is the file the CLI reads; and not a missing feature,
-since `PreToolUse` appears in the binary.
+Claude Code runs hook commands **through a shell**, which treats backslashes as
+escape characters. A path written the Windows way, `C:\Users\me\AppData\Roaming\agent-island\bin\claude-hook.cmd`,
+arrives as `C:UsersmeAppDataRoamingagent-islandbinclaude-hook.cmd` -- a path
+that does not exist.
 
-Why it is ignored is unknown. What is known is that it does nothing, so it was
-removed rather than left as dead configuration in a user's settings file.
+The hook is then configured, launched, and fails silently on every tool call.
+That is indistinguishable from Claude ignoring hooks altogether, and it was
+mistaken for exactly that: the feature was declared impossible and removed
+before the real cause was found.
 
-**The Codex hook is untested in a live session.** Its mechanism is different
-and better evidenced — `PermissionRequest` is a documented event in
-`codex-rs/hooks/` that runs in the approval path — but after this, that is a
-reason for optimism and not a claim. Do not describe it as working until
-someone has watched it fire.
+What found it was testing the thing that had not been tested -- whether *any*
+hook fires. A minimal hook that only appends to a log fired immediately, and
+the only meaningful difference between it and ours was the path separator.
 
-For terminals, panel scraping remains the mechanism rather than the fallback.
+`toHookCommand` now writes forward slashes, which Windows accepts everywhere
+that matters and a shell leaves alone. A test asserts the installed command
+contains no backslash at all.
+
+The lesson generalises: when something does not work, check that the mechanism
+runs at all before concluding the mechanism is unavailable.
+
+### Still to verify
+
+The VS Code extension specifically. The hook is confirmed firing for a CLI
+session; whether the extension's `--settings` layer admits user-level hooks is
+a separate question, and the earlier negative result was taken with the broken
+path, so it proves nothing either way.
+
+The Codex hook is likewise untested in a live session.
