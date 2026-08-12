@@ -310,7 +310,15 @@ export function IslandShell(props: IslandShellProps) {
             ) : (
               <>
                 <DockRing status={hasApproval ? 'waiting' : active.status} />
-                <AgentMark agentId={active.id} mini />
+                {/* The mark itself turns while the agent works. Claude's is a
+                    twelve-fold starburst, so a slow rotation reads as the
+                    spinner it already is in the CLI rather than as a logo that
+                    has come loose. */}
+                <AgentMark
+                  agentId={active.id}
+                  mini
+                  className={!hasApproval && showsActivity(active.status) && active.status !== 'waiting' ? 'is-working' : ''}
+                />
                 {/* The badge has to stay round to fit inside the disc, so the
                     count is capped rather than allowed to widen it. */}
                 {hasApproval ? <span className="dock-badge">{queueCount > 9 ? '9+' : queueCount}</span> : null}
@@ -332,7 +340,11 @@ export function IslandShell(props: IslandShellProps) {
             ) : (
               <>
                 <span className="compact-leading" data-drag-region="true">
-                  <AgentMark agentId={hasApproval && approval ? approval.agentId : active.id} compact />
+                  <AgentMark
+                    agentId={hasApproval && approval ? approval.agentId : active.id}
+                    compact
+                    className={!hasApproval && showsActivity(active.status) && active.status !== 'waiting' ? 'is-working' : ''}
+                  />
                   <StatusDot status={hasApproval ? 'waiting' : active.status} />
                 </span>
                 <span className="compact-copy" data-drag-region="true">

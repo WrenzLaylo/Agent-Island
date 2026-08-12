@@ -557,12 +557,25 @@ select:focus-visible,
   transform-origin: 50% 50%;
 }
 
-.dock-ring.status-running circle,
-.dock-ring.status-thinking circle {
-  stroke: var(--blue);
-  /* Three quarters of the circumference, leaving a gap that reads as motion. */
-  stroke-dasharray: 99 33;
-  animation: dock-spin 1.4s linear infinite;
+/*
+ * Working is shown by turning the agent's own mark, not by drawing a blue arc
+ * around it. The arc was a generic spinner that said only "something is
+ * happening"; the mark says *who* is working, in one glyph, and Claude's is a
+ * twelve-fold starburst whose rotation is seamless — it is the same spinner
+ * the CLI already uses.
+ *
+ * The ring is kept for `waiting`, which is a different fact and needs a
+ * different colour rather than a different speed.
+ */
+.agent-mark.is-working svg {
+  animation: mark-spin 2.6s linear infinite;
+  transform-origin: 50% 50%;
+}
+
+@keyframes mark-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .dock-ring.status-waiting circle {
