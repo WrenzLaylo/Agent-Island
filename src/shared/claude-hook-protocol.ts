@@ -15,6 +15,42 @@
 
 export type HookPermission = 'allow' | 'deny' | 'ask'
 
+/**
+ * Tools that read and never change anything.
+ *
+ * A denylist, not an allowlist, and that direction is the whole point. The
+ * first attempt matched `Bash|Write|Edit|…` and missed real shell commands
+ * outright: on Windows the VS Code extension runs them through a tool it
+ * displays as **PowerShell**, so nothing matched and nothing was ever raised.
+ * Guessing the complete set of tools that mutate is a bet against every future
+ * release; guessing the set that only reads is a much smaller one, and being
+ * wrong costs an unnecessary card rather than a silent miss.
+ */
+const READ_ONLY_TOOLS = new Set([
+  'Read',
+  'Grep',
+  'Glob',
+  'LS',
+  'NotebookRead',
+  'TodoWrite',
+  'TodoRead',
+  'WebSearch',
+  'Task',
+  'ExitPlanMode'
+])
+
+/**
+ * Whether this call is worth putting in front of the user.
+ *
+ * `PreToolUse` fires before *every* tool call, not only ones needing
+ * permission, so without this an island card would appear for each file read.
+ * Answered locally, with no card and no round trip to the island.
+ */
+export function toolNeedsApproval(toolName: string): boolean {
+  if (!toolName) return false
+  return !READ_ONLY_TOOLS.has(toolName)
+}
+
 /** What Claude Code sends on stdin. Only the fields used here are typed. */
 export interface HookInput {
   session_id?: string
@@ -62,9 +98,18 @@ export function parseHookInput(raw: string): ParsedHookInput | null {
 export function describeToolCall(toolName: string, input: Record<string, unknown>): string {
   const text = (key: string): string => (typeof input[key] === 'string' ? (input[key] as string) : '')
 
+  /*
+   * Any tool carrying a command shows the command, whatever it calls itself.
+   * On Windows the VS Code extension runs shell calls through a tool named
+   * PowerShell, which would otherwise be described as "PowerShell: <command>"
+   * — the tool name is noise next to the thing being authorised.
+   */
+  const command = text('command')
+  if (command) return command
+
   switch (toolName) {
     case 'Bash':
-      return text('command') || 'Run a shell command'
+      return 'Run a shell command'
     case 'Write':
       return `Write ${text('file_path') || 'a file'}`
     case 'Edit':

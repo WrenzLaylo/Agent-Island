@@ -19,7 +19,8 @@ import {
   describeToolCall,
   hookResponse,
   parseHookInput,
-  permissionForDecision
+  permissionForDecision,
+  toolNeedsApproval
 } from '../shared/claude-hook-protocol'
 import { askIsland, bridgeRoot, islandAvailable, readStdin } from './bridge-client'
 
@@ -31,6 +32,10 @@ function answer(permission: 'allow' | 'deny' | 'ask', reason: string): never {
 function main(): void {
   const input = parseHookInput(readStdin())
   if (!input) answer('ask', 'Agent Island could not read the hook payload')
+
+  // Reads and searches are decided here rather than by a matcher, so a tool
+  // this build has never heard of still reaches the user.
+  if (!toolNeedsApproval(input.toolName)) answer('ask', 'Read-only tool')
 
   const root = bridgeRoot()
   // The common case when the island is not running: no waiting, no file.

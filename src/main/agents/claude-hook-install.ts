@@ -29,12 +29,15 @@ export const HOOK_MARKER = 'agent-island'
  * work. Codex's `PermissionRequest` has no such problem, which is why its
  * matcher is empty and this one is not.
  *
- * Limited to tools that change something or reach the network. The cost of the
- * narrowing is that a future tool worth guarding is not covered until this
- * list learns about it; the cost of not narrowing is that nobody can use the
- * hook at all.
+ * Naming tools here was tried and failed: `Bash|Write|Edit|…` never matched a
+ * real shell command, because on Windows the VS Code extension runs them
+ * through a tool it displays as **PowerShell**. Every command ran unannounced.
+ *
+ * So the matcher takes everything and the *hook* decides, skipping a small set
+ * of known read-only tools with no card and no round trip. Being wrong there
+ * costs one unnecessary card; being wrong in a matcher costs silence.
  */
-export const CLAUDE_HOOK_MATCHER = 'Bash|Write|Edit|MultiEdit|NotebookEdit|WebFetch'
+export const CLAUDE_HOOK_MATCHER = ''
 
 export interface HookEntry {
   type: string

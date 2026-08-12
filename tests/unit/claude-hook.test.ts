@@ -5,7 +5,8 @@ import {
   islandIsListening,
   parseHookInput,
   permissionForDecision,
-  shouldKeepWaiting
+  shouldKeepWaiting,
+  toolNeedsApproval
 } from '../../src/shared/claude-hook-protocol'
 import {
   hookIsInstalled,
@@ -51,6 +52,14 @@ describe('describing the call', () => {
   it('shows the command, not the tool name', () => {
     // The command is the decision; a card reading "Bash" tells nobody anything.
     expect(describeToolCall('Bash', { command: 'git push --force' })).toBe('git push --force')
+  })
+
+  it('shows the command whatever the tool calls itself', () => {
+    // Windows runs shell calls through a tool named PowerShell; the name is
+    // noise next to the thing being authorised.
+    expect(describeToolCall('PowerShell', { command: 'Get-ChildItem -Force' })).toBe(
+      'Get-ChildItem -Force'
+    )
   })
 
   it('names the file for edits and writes', () => {
@@ -161,19 +170,14 @@ describe('settings.json editing', () => {
     expect(withHookRemoved(settings)).toEqual(settings)
   })
 
-  it('only fires for tools that change something', () => {
+  it('matches every tool and lets the hook decide', () => {
     /*
-     * PreToolUse fires before *every* tool call, not only ones needing
-     * permission. An empty matcher put a card in front of every Read and Grep,
-     * which is unusable within seconds of real work.
+     * Naming tools in the matcher was tried and failed: `Bash|Write|Edit|…`
+     * never matched a real shell command, because on Windows the VS Code
+     * extension runs them through a tool it displays as PowerShell. Every
+     * command ran unannounced.
      */
-    const matcher = withHookInstalled({}, COMMAND).hooks?.PreToolUse?.at(-1)?.matcher ?? ''
-    for (const tool of ['Bash', 'Write', 'Edit', 'WebFetch']) {
-      expect(new RegExp(`^(?:${matcher})$`).test(tool)).toBe(true)
-    }
-    for (const tool of ['Read', 'Grep', 'Glob', 'TodoWrite']) {
-      expect(new RegExp(`^(?:${matcher})$`).test(tool)).toBe(false)
-    }
+    expect(withHookInstalled({}, COMMAND).hooks?.PreToolUse?.at(-1)?.matcher).toBe('')
   })
 })
 
@@ -199,5 +203,26 @@ describe('waiting for the user', () => {
   it('stops at the deadline even with a healthy island', () => {
     expect(shouldKeepWaiting(now, now, now)).toBe(false)
     expect(shouldKeepWaiting(now, now + 1, now)).toBe(false)
+  })
+})
+
+describe('which calls are worth raising', () => {
+  it('raises anything that is not known to be read-only', () => {
+    // Including tool names this build has never seen — a renamed or new shell
+    // tool must not slip through silently, which is exactly what happened when
+    // the matcher named tools instead.
+    for (const tool of ['Bash', 'PowerShell', 'Write', 'Edit', 'WebFetch', 'SomeFutureTool']) {
+      expect(toolNeedsApproval(tool)).toBe(true)
+    }
+  })
+
+  it('answers reads and searches locally, with no card', () => {
+    for (const tool of ['Read', 'Grep', 'Glob', 'TodoWrite', 'WebSearch']) {
+      expect(toolNeedsApproval(tool)).toBe(false)
+    }
+  })
+
+  it('does not raise a card for a payload with no tool name', () => {
+    expect(toolNeedsApproval('')).toBe(false)
   })
 })
