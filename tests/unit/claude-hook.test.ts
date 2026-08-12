@@ -19,6 +19,10 @@ import {
 import { bridgeAgentId } from '../../src/main/agents/approval-bridge'
 
 const COMMAND = 'C:\\Users\\x\\AppData\\Roaming\\agent-island\\bin\\claude-hook.cmd'
+const NOTIFY_CMD = 'C:/Users/x/AppData/Roaming/agent-island/bin/claude-notify-hook.cmd'
+const SESSION_COMMAND = 'C:/Users/x/AppData/Roaming/agent-island/bin/claude-session-hook.cmd'
+/** All four events install together; see `HookCommands`. */
+const CMDS = { record: COMMAND, notify: NOTIFY_CMD, session: SESSION_COMMAND }
 
 describe('hook input', () => {
   it('reads what Claude Code sends', () => {
@@ -122,7 +126,7 @@ describe('island liveness', () => {
 
 describe('settings.json editing', () => {
   it('adds a marked entry', () => {
-    const next = withHookInstalled({}, COMMAND)
+    const next = withHookInstalled({}, CMDS)
     expect(hookIsInstalled(next)).toBe(true)
     const entry = next.hooks?.PreToolUse?.[0].hooks?.[0]
     // Stored with forward slashes; see `toHookCommand`.
@@ -142,7 +146,7 @@ describe('settings.json editing', () => {
       model: 'opus'
     }
 
-    const installed = withHookInstalled(theirs, COMMAND)
+    const installed = withHookInstalled(theirs, CMDS)
     expect(installed.hooks?.PreToolUse).toHaveLength(2)
     expect(installed.model).toBe('opus')
 
@@ -154,8 +158,8 @@ describe('settings.json editing', () => {
   it('is idempotent', () => {
     // Installing twice must not stack duplicates, and a changed command path
     // must replace the old entry rather than sit beside it.
-    const once = withHookInstalled({}, COMMAND)
-    const twice = withHookInstalled(once, 'C:\\new\\path\\claude-hook.cmd')
+    const once = withHookInstalled({}, CMDS)
+    const twice = withHookInstalled(once, { ...CMDS, record: 'C:\\new\\path\\claude-hook.cmd' })
     const entries = (twice.hooks?.PreToolUse ?? []).flatMap((group) => group.hooks ?? [])
     expect(entries.filter(isOurs)).toHaveLength(1)
     expect(entries[0].command).toBe('C:/new/path/claude-hook.cmd')
@@ -164,7 +168,7 @@ describe('settings.json editing', () => {
   it('cleans up after itself completely', () => {
     // Removing the only hook should not leave `hooks: { PreToolUse: [] }` or an
     // empty `hooks` object as litter in someone's settings file.
-    const removed = withHookRemoved(withHookInstalled({}, COMMAND))
+    const removed = withHookRemoved(withHookInstalled({}, CMDS))
     expect(removed.hooks).toBeUndefined()
   })
 
@@ -180,7 +184,7 @@ describe('settings.json editing', () => {
      * extension runs them through a tool it displays as PowerShell. Every
      * command ran unannounced.
      */
-    expect(withHookInstalled({}, COMMAND).hooks?.PreToolUse?.at(-1)?.matcher).toBe('')
+    expect(withHookInstalled({}, CMDS).hooks?.PreToolUse?.at(-1)?.matcher).toBe('')
   })
 })
 
@@ -268,7 +272,7 @@ describe('the hook command path', () => {
   })
 
   it('applies it to what actually gets installed', () => {
-    const entry = withHookInstalled({}, WINDOWS_PATH).hooks?.PreToolUse?.at(-1)?.hooks?.[0]
+    const entry = withHookInstalled({}, { ...CMDS, record: WINDOWS_PATH }).hooks?.PreToolUse?.at(-1)?.hooks?.[0]
     expect(entry?.command).not.toContain(BACKSLASH)
   })
 })
@@ -302,7 +306,7 @@ describe('publishing the session itself', () => {
      * while still reading "Run island claude in a terminal to connect a
      * session" — contradicting itself on one screen.
      */
-    const next = withHookInstalled({}, COMMAND, SESSION_CMD)
+    const next = withHookInstalled({}, CMDS)
     for (const event of ['SessionStart', 'SessionEnd']) {
       const entry = next.hooks?.[event]?.at(-1)?.hooks?.[0]
       expect(entry?.command).toBe(SESSION_CMD)
@@ -311,14 +315,14 @@ describe('publishing the session itself', () => {
   })
 
   it('does not make a session start wait on Agent Island', () => {
-    const entry = withHookInstalled({}, COMMAND, SESSION_CMD).hooks?.SessionStart?.at(-1)?.hooks?.[0]
+    const entry = withHookInstalled({}, CMDS).hooks?.SessionStart?.at(-1)?.hooks?.[0]
     expect(entry?.timeout).toBeLessThanOrEqual(10)
   })
 
   it('removes every event it wrote to', () => {
     // A SessionStart entry left behind would keep publishing sessions long
     // after the user removed the hook.
-    const removed = withHookRemoved(withHookInstalled({}, COMMAND, SESSION_CMD))
+    const removed = withHookRemoved(withHookInstalled({}, CMDS))
     expect(removed.hooks).toBeUndefined()
   })
 
@@ -326,13 +330,27 @@ describe('publishing the session itself', () => {
     const theirs: ClaudeSettings = {
       hooks: { SessionStart: [{ matcher: '', hooks: [{ type: 'command', command: 'mine.sh' }] }] }
     }
-    const removed = withHookRemoved(withHookInstalled(theirs, COMMAND, SESSION_CMD))
+    const removed = withHookRemoved(withHookInstalled(theirs, CMDS))
     expect(removed.hooks?.SessionStart).toEqual(theirs.hooks?.SessionStart)
   })
 
-  it('installs only the approval hook when no session command is given', () => {
-    const next = withHookInstalled({}, COMMAND)
-    expect(next.hooks?.SessionStart).toBeUndefined()
-    expect(next.hooks?.PreToolUse).toBeDefined()
+  it('installs every event in one pass', () => {
+    /*
+     * Installing PreToolUse without Notification is the failure that matters:
+     * one records calls nobody reads, the other can only say "Claude needs
+     * your permission" with no idea what for. They go in together or not at
+     * all.
+     */
+    const next = withHookInstalled({}, CMDS)
+    for (const event of ['PreToolUse', 'Notification', 'SessionStart', 'SessionEnd']) {
+      expect(next.hooks?.[event], event).toBeDefined()
+    }
+  })
+
+  it('does not let a tool call wait on Agent Island', () => {
+    // The 130s allowance belonged to the version that blocked until the user
+    // answered. This one writes a file and returns.
+    const entry = withHookInstalled({}, CMDS).hooks?.PreToolUse?.at(-1)?.hooks?.[0]
+    expect(entry?.timeout).toBeLessThanOrEqual(10)
   })
 })

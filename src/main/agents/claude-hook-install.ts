@@ -99,21 +99,53 @@ function withoutOurs(groups: HookMatcher[] | undefined): HookMatcher[] {
     .filter((group) => (group.hooks ?? []).length > 0)
 }
 
+export interface HookCommands {
+  /** PreToolUse: records the call, never waits. */
+  record: string
+  /** Notification: raises the card beside the agent's own prompt. */
+  notify: string
+  /** SessionStart / SessionEnd: publishes the session itself. */
+  session: string
+}
+
 export function withHookInstalled(
   settings: ClaudeSettings,
-  command: string,
-  sessionCommand?: string
+  commands: HookCommands
 ): ClaudeSettings {
   const next: ClaudeSettings = { ...settings }
   const hooks: Record<string, HookMatcher[]> = { ...(next.hooks ?? {}) }
 
   // Ours are dropped first and re-added, so installing twice is idempotent and
   // a command path can change between versions without stacking duplicates.
+  /*
+   * Short timeout. This hook only writes one small file and returns `ask`;
+   * nothing about a tool call should ever wait on Agent Island. The 130s it
+   * used to allow was for the version that blocked until the user answered,
+   * which is exactly the behaviour being removed.
+   */
   hooks.PreToolUse = [
     ...withoutOurs(hooks.PreToolUse),
     {
       matcher: CLAUDE_HOOK_MATCHER,
-      hooks: [{ type: 'command', command: toHookCommand(command), timeout: 130, _source: HOOK_MARKER }]
+      hooks: [
+        { type: 'command', command: toHookCommand(commands.record), timeout: 10, _source: HOOK_MARKER }
+      ]
+    }
+  ]
+
+  /*
+   * Written in the same pass as PreToolUse, deliberately. Installing one
+   * without the other is the failure that matters: PreToolUse alone records
+   * calls nobody reads, and Notification alone can only say "Claude needs your
+   * permission" with no idea what for.
+   */
+  hooks.Notification = [
+    ...withoutOurs(hooks.Notification),
+    {
+      matcher: '',
+      hooks: [
+        { type: 'command', command: toHookCommand(commands.notify), timeout: 10, _source: HOOK_MARKER }
+      ]
     }
   ]
 
@@ -126,18 +158,16 @@ export function withHookInstalled(
    * Short timeout: these only write or delete one small file, and nothing about
    * a session's start should ever wait on Agent Island.
    */
-  if (sessionCommand) {
-    for (const event of ['SessionStart', 'SessionEnd']) {
-      hooks[event] = [
-        ...withoutOurs(hooks[event]),
-        {
-          matcher: '',
-          hooks: [
-            { type: 'command', command: toHookCommand(sessionCommand), timeout: 10, _source: HOOK_MARKER }
-          ]
-        }
-      ]
-    }
+  for (const event of ['SessionStart', 'SessionEnd']) {
+    hooks[event] = [
+      ...withoutOurs(hooks[event]),
+      {
+        matcher: '',
+        hooks: [
+          { type: 'command', command: toHookCommand(commands.session), timeout: 10, _source: HOOK_MARKER }
+        ]
+      }
+    ]
   }
 
   next.hooks = hooks
@@ -152,7 +182,7 @@ export function withHookRemoved(settings: ClaudeSettings): ClaudeSettings {
   const hooks: Record<string, HookMatcher[]> = { ...next.hooks }
   // Every event we might have written to, not just PreToolUse — leaving a
   // SessionStart entry behind would keep publishing sessions after removal.
-  for (const event of ['PreToolUse', 'SessionStart', 'SessionEnd']) {
+  for (const event of ['PreToolUse', 'Notification', 'SessionStart', 'SessionEnd']) {
     if (!Array.isArray(hooks[event])) continue
     const cleaned = withoutOurs(hooks[event])
     if (cleaned.length > 0) hooks[event] = cleaned
@@ -212,8 +242,7 @@ function writeSettings(path: string, settings: ClaudeSettings): void {
 }
 
 export function installClaudeHook(
-  command: string,
-  sessionCommand?: string,
+  commands: HookCommands,
   path = claudeSettingsPath()
 ): { ok: boolean; error?: string } {
   const read = readSettings(path)
@@ -223,7 +252,7 @@ export function installClaudeHook(
     return { ok: false, error: `Could not read ${path}: ${read.error}` }
   }
   try {
-    writeSettings(path, withHookInstalled(read.value, command, sessionCommand))
+    writeSettings(path, withHookInstalled(read.value, commands))
     return { ok: true }
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) }

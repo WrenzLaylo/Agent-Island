@@ -69,6 +69,11 @@ export function claudeSessionHookLauncher(): string {
   return join(launcherDir(), 'claude-session-hook.cmd')
 }
 
+/** Notification, which raises the card beside the agent's own prompt. */
+export function claudeNotifyHookLauncher(): string {
+  return join(launcherDir(), 'claude-notify-hook.cmd')
+}
+
 function wrapperPath(): string {
   // out/main/wrapper.js next to out/main/index.js in both dev and packaged runs.
   const packed = join(app.getAppPath(), 'out', 'main', 'wrapper.js')
@@ -144,7 +149,7 @@ export function ensureLauncherScripts(): string {
    * out/ does not leave the user's settings pointing at a file that is gone.
    * Regenerated here on every launch for exactly that reason.
    */
-  for (const hook of ['claude', 'codex', 'claude-session']) writeHookLauncher(dir, exe, hook)
+  for (const hook of ['claude', 'codex', 'claude-session', 'claude-notify']) writeHookLauncher(dir, exe, hook)
 
   return dir
 }

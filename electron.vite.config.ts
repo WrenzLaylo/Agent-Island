@@ -19,7 +19,8 @@ export default defineConfig({
           // Claude spawns it with plain node, which cannot read an archive.
           'claude-hook': resolve('src/hooks/claude-hook.ts'),
           'codex-hook': resolve('src/hooks/codex-hook.ts'),
-          'claude-session-hook': resolve('src/hooks/claude-session-hook.ts')
+          'claude-session-hook': resolve('src/hooks/claude-session-hook.ts'),
+          'claude-notify-hook': resolve('src/hooks/claude-notify-hook.ts')
         }
       }
     }
