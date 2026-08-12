@@ -14,10 +14,12 @@
     "lint": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "start": "electron-vite preview",
     "icon": "node scripts/make-icon.mjs",
-    "package": "npm run build && electron-builder --win",
-    "package:dir": "npm run build && electron-builder --win --dir"
+    "package": "npm run build && electron-builder --win --publish never",
+    "package:dir": "npm run build && electron-builder --win --dir --publish never",
+    "release": "npm run build && electron-builder --win --publish always"
   },
   "dependencies": {
+    "electron-updater": "^6.8.9",
     "framer-motion": "^12.23.12",
     "node-pty": "^1.1.0",
     "react": "^19.1.1",

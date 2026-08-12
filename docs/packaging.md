@@ -120,6 +120,54 @@ A packaged build also gets a real AppUserModelId, so its login entry is named
 properly instead of sharing the generic `electron.app.Electron` value that an
 unpackaged run is stuck with.
 
+## Auto-update
+
+`electron-updater` against GitHub Releases. The feed is `publish:` in
+`electron-builder.yml`, and the `latest.yml` + `.blockmap` the build already
+emitted are what it consumes.
+
+```sh
+npm run package    # --publish never, cannot push anything by accident
+npm run release    # --publish always, needs GH_TOKEN
+```
+
+`npm run release` uploads a GitHub Release for the current `version` in
+`package.json`. Bump that first; publishing twice from one version does not
+produce an update.
+
+### It is deliberately quiet
+
+The tray entry is the entire interface — no dialogs. This app exists to
+interrupt the user at the right moment, and interrupting them at the wrong one
+to talk about itself would undermine the only thing it does.
+
+- Checks 30s after launch, then every 6 hours.
+- Downloads on its own; **installing always waits for the user.**
+- A restart is refused while any prompt is on screen, and the tray says why
+  rather than ignoring the click.
+- Failures are silent beyond the label. Being offline is the common case.
+
+`autoInstallOnAppQuit` is on, so a downloaded update lands next time the app
+closes even if the restart is never chosen. Nothing is required of the user.
+
+### Why a restart is gated at all
+
+Restarting is unusually cheap here: agent sessions are separate wrapper
+processes and their prompts live in files, so a prompt raised during the
+restart is still there afterwards.
+
+The exception is a decision already on screen. A card vanishing mid-read is
+indistinguishable from a crash, and the natural reaction — click where the
+button was — is exactly how an approval gets answered by accident. See
+`canRestartForUpdate` in `src/shared/update-safety.ts`.
+
+### Unsigned updates
+
+electron-updater verifies a downloaded update's publisher against the running
+app's. With neither signed there is nothing to compare, and NSIS updates still
+apply. Once you sign, keep signing: a signed app will refuse an unsigned
+update.
+
 ### userData
 
 `app.getName()` resolves from `package.json` `name` (`agent-island`), not from

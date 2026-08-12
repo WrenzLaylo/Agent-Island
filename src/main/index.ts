@@ -44,6 +44,8 @@ import type {
 import { isAgentId } from '../shared/pty-types'
 import { tuckedBounds, tuckSideFor } from '../shared/tuck'
 import { loginItemTarget, supportsLoginItem } from './login-item'
+import { applyUpdate, checkForUpdates, getUpdateState, initUpdater, onUpdateStateChanged } from './updater'
+import { canRestartForUpdate, updateMenuEnabled, updateMenuLabel } from '../shared/update-safety'
 import {
   axisSettled,
   frameIntervalMs,
@@ -505,6 +507,20 @@ function createTray(): void {
   rebuildTrayMenu()
 }
 
+/**
+ * How many prompts are currently waiting on the user.
+ *
+ * Both sources count: a session prompt from a wrapper and a bridge approval
+ * are equally "someone is mid-decision", and restarting under either is what
+ * `canRestartForUpdate` exists to prevent.
+ */
+function pendingPromptCounts(): { pendingApprovals: number; terminalPrompts: number } {
+  return {
+    pendingApprovals: bridgeWatcher.list().length,
+    terminalPrompts: sessionWatcher.listPrompts().length
+  }
+}
+
 function rebuildTrayMenu(): void {
   if (!tray) return
   const settings = getSettings()
@@ -516,6 +532,25 @@ function rebuildTrayMenu(): void {
         label: 'Return to top centre',
         accelerator: 'CommandOrControl+Alt+Home',
         click: () => void returnIslandHome()
+      },
+      { type: 'separator' },
+      {
+        /*
+         * The whole update interface. No dialogs: this app exists to interrupt
+         * the user at the right moment, and interrupting them at the wrong one
+         * to talk about itself would undermine that.
+         */
+        label: updateMenuLabel(getUpdateState(), canRestartForUpdate(pendingPromptCounts())),
+        enabled: updateMenuEnabled(getUpdateState(), canRestartForUpdate(pendingPromptCounts())),
+        click: () => {
+          if (getUpdateState().stage === 'ready') {
+            // Already gated by `enabled`; the check inside applyUpdate is the
+            // real guard, since the menu was built before this click.
+            applyUpdate(pendingPromptCounts())
+            return
+          }
+          void checkForUpdates()
+        }
       },
       { type: 'separator' },
       {
@@ -1081,6 +1116,10 @@ async function bootstrap(): Promise<void> {
   discoveryCache = await discoverAgents()
   createWindow()
   createTray()
+
+  initUpdater()
+  // The tray label is the only surface for update state, so it has to follow it.
+  onUpdateStateChanged(() => rebuildTrayMenu())
 
   /*
    * Re-apply on every launch so the registry entry follows the app if the

@@ -80,3 +80,11 @@ nsis:
 # `scripts/make-dev-cert.ps1` creates a self-signed certificate for local use.
 # That only silences the warning on machines that trust it; distributing to
 # anyone else needs a real certificate. See docs/packaging.md.
+
+# Where electron-updater looks for new versions. Only consulted by builds run
+# with `--publish`; `npm run package` passes `--publish never` so an ordinary
+# local build can never push anything to GitHub by accident.
+publish:
+  provider: github
+  owner: WrenzLaylo
+  repo: Agent-Island
