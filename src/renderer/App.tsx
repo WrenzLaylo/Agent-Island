@@ -97,6 +97,20 @@ const MAX_VISIBLE_APPROVAL_ROWS = 5
 const OVERFLOW_EPSILON = 2
 /** However wrong the arithmetic is, the island stays an island. */
 const MAX_OVERFLOW_PAD = 260
+/**
+ * Slack has to clear a wider bar than a shortfall.
+ *
+ * Growing rescues content the user cannot reach; shrinking only tidies space
+ * they can already see. Not worth a window that twitches over a pixel or two.
+ */
+const SLACK_EPSILON = 10
+/**
+ * Floor on shrinking, so a mis-measurement cannot collapse a card to nothing.
+ * The arithmetic is the baseline; this only trims what it over-allowed.
+ */
+const MAX_SHRINK_PAD = 160
+/** Corrections allowed per target size before the window is left as it is. */
+const MAX_SIZE_ADJUSTMENTS = 3
 
 /**
  * Window size == visible size. There is no native mask and no frame inset any
@@ -782,7 +796,18 @@ export function App() {
   }, [])
 
   const [overflowPad, setOverflowPad] = useState(0)
-  useEffect(() => setOverflowPad(0), [size.width, size.height])
+  /*
+   * How many corrections this target size has already had.
+   *
+   * Growing and shrinking can chase each other: a shrink can reveal a
+   * shortfall, which grows, which reveals slack. The epsilons are asymmetric
+   * to discourage it, but a hard cap is what guarantees the window settles.
+   */
+  const adjustments = useRef(0)
+  useEffect(() => {
+    setOverflowPad(0)
+    adjustments.current = 0
+  }, [size.width, size.height])
 
   useEffect(() => {
     if (!settingsLoaded) return
@@ -796,12 +821,44 @@ export function App() {
      * band of empty space below the last option.
      */
     if (isMorphing) return
+    if (adjustments.current >= MAX_SIZE_ADJUSTMENTS) return
     const timer = window.setTimeout(() => {
       const scroller = document.querySelector('.approval-card, .choice-card')
       if (!(scroller instanceof HTMLElement)) return
+
       const shortfall = scroller.scrollHeight - scroller.clientHeight
       if (shortfall > OVERFLOW_EPSILON) {
+        adjustments.current += 1
         setOverflowPad((pad) => Math.min(pad + shortfall, MAX_OVERFLOW_PAD))
+        return
+      }
+
+      /*
+       * Slack cannot be read from scrollHeight. The card fills its container,
+       * so when the content is *shorter* than the window both measurements are
+       * simply the container's height and the difference is zero — the height
+       * arithmetic could over-allow by a hundred pixels and this would report
+       * a perfect fit.
+       *
+       * The content's real bottom is the last child's, so that is what gets
+       * compared. Reported by the user as a band of empty space under cards
+       * with two options — which is now the common case, not an edge one,
+       * because a hook-raised card always offers exactly Allow once / Deny.
+       */
+      const last = scroller.lastElementChild
+      if (!(last instanceof HTMLElement)) return
+      const contentBottom = last.offsetTop + last.offsetHeight
+      const style = window.getComputedStyle(scroller)
+      const slack = scroller.clientHeight - contentBottom - parseFloat(style.paddingBottom || '0')
+
+      /*
+       * A larger threshold than for growth, on purpose. Growing fixes content
+       * the user cannot reach; shrinking only tidies space they can see, so it
+       * is not worth a window that twitches over a pixel or two.
+       */
+      if (slack > SLACK_EPSILON) {
+        adjustments.current += 1
+        setOverflowPad((pad) => Math.max(pad - Math.round(slack), -MAX_SHRINK_PAD))
       }
     }, 120)
     return () => window.clearTimeout(timer)
