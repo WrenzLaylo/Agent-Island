@@ -65,19 +65,37 @@ app-server remains the right reference for what those decisions *mean* — see
 not the way in. The extension owns its app-server connection; nothing outside
 can join it.
 
-## Status
+## Status: the Claude hook does not work, and was removed
 
-Both are implemented, as hooks rather than as protocol clients:
+Built, and then disproved. Recorded here in full so nobody rebuilds it on the
+same assumption.
 
-| Agent | Event | Declared in |
-|---|---|---|
-| Claude | `PreToolUse` | `~/.claude/settings.json` |
-| Codex | `PermissionRequest` | `$CODEX_HOME/hooks.json` |
+**Our side works.** Invoking the installed launcher directly raises a card,
+returns a decision, and withdraws its request — verified repeatedly, including
+through the exact `.cmd` the settings file names.
 
-Neither is installed automatically — each edits a config file the user's agent
-depends on, so both are tray actions.
+**Claude Code never calls it.** Tested against a session started well after
+installation, so there is no question of stale settings:
 
-This also retires #21's original goal by a different route than planned. Hooks
-give *terminal* sessions a structured channel too, so approvals no longer have
-to depend on scraping panel text — for these two agents, the scraper becomes
-the fallback rather than the mechanism.
+| Test | Result |
+|---|---|
+| VS Code extension, genuine write-outside-sandbox | extension showed its own dialog |
+| Fresh CLI session (`-p`), `Write` to a permitted path | file written, no card, no pending file |
+| Same, with `--debug` | no mention of hooks in the output at all |
+
+Things ruled out along the way: it is not the extension's `--settings` layer,
+since the plain CLI ignores it too; not the `_source` marker field, tested with
+it removed; not the config path, since `CLAUDE_CONFIG_DIR` is unset and
+`~/.claude/settings.json` is the file the CLI reads; and not a missing feature,
+since `PreToolUse` appears in the binary.
+
+Why it is ignored is unknown. What is known is that it does nothing, so it was
+removed rather than left as dead configuration in a user's settings file.
+
+**The Codex hook is untested in a live session.** Its mechanism is different
+and better evidenced — `PermissionRequest` is a documented event in
+`codex-rs/hooks/` that runs in the approval path — but after this, that is a
+reason for optimism and not a claim. Do not describe it as working until
+someone has watched it fire.
+
+For terminals, panel scraping remains the mechanism rather than the fallback.
