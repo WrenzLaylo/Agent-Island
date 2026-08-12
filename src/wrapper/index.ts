@@ -421,6 +421,14 @@ async function main(): Promise<void> {
   // Edge-triggered: the session file is rewritten only when the agent starts
   // or stops producing output, not on every chunk.
   let busy = false
+  /*
+   * The last screen we saw, so "output arrived" can be distinguished from
+   * "something changed". A terminal repaints its input line constantly — a
+   * cursor blink, a redraw after a resize — and treating every byte as work
+   * pinned sessions at busy forever. Measured on an idle Hermes: 0ms of CPU
+   * over three seconds, while the island showed it working indefinitely.
+   */
+  let lastVisibleText = ''
   let lastOutputAt = 0
   /** Stops one unread picker being reported on every poll while it sits there. */
   let lastStallFingerprint: string | null = null
@@ -548,6 +556,18 @@ async function main(): Promise<void> {
   const scan = () => {
     const text = normalizeTerminalText(replay.length > SCAN_TAIL_CHARS ? replay.slice(-SCAN_TAIL_CHARS) : replay)
 
+    /*
+     * Activity is a *change* on screen, not the arrival of bytes. This also
+     * repairs stall detection, which reset its fingerprint on every chunk and
+     * so could never fire for an agent whose prompt repaints.
+     */
+    if (text !== lastVisibleText) {
+      lastVisibleText = text
+      lastOutputAt = Date.now()
+      lastStallFingerprint = null
+      publishBusy(true)
+    }
+
     const update =
       agentId === 'hermes'
         ? updateHermesApprovalTracker({
@@ -636,9 +656,8 @@ async function main(): Promise<void> {
   }
 
   term.onData((data) => {
-    lastOutputAt = Date.now()
-    lastStallFingerprint = null
-    publishBusy(true)
+    // Deliberately does not touch `busy`: see the scan, which only counts
+    // output that changes what is on screen.
     process.stdout.write(data)
     replay = (replay + data).slice(-MAX_REPLAY)
     scheduleScan()

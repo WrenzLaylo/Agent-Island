@@ -11,6 +11,7 @@ import type {
 } from '@shared/contracts'
 import { AGENT_ORDER } from '@shared/contracts'
 import { AgentMark } from './AgentMark'
+import { ClaudeSpinner } from './ClaudeSpinner'
 import { folderName, type SessionRow } from '@shared/session-list'
 import { AgentTabs } from './AgentTabs'
 import { SessionList } from './SessionList'
@@ -167,6 +168,19 @@ function sessionSummary(rows: SessionRow[]): string {
   return `${rows.length} sessions idle`
 }
 
+/**
+ * Claude's mark is a starburst, so it can animate itself while working. The
+ * other agents fall back to the ring — rotating a non-radial logo looks broken
+ * and there is nothing in it to pulse.
+ */
+function usesMarkSpinner(agent: AgentSnapshot, hasApproval: boolean): boolean {
+  return (
+    agent.id === 'claude' &&
+    !hasApproval &&
+    (agent.status === 'running' || agent.status === 'thinking')
+  )
+}
+
 /** Motion only where something is genuinely in flight. */
 function showsActivity(status: AgentSnapshot['status']): boolean {
   return status === 'running' || status === 'thinking' || status === 'waiting'
@@ -309,16 +323,20 @@ export function IslandShell(props: IslandShellProps) {
               <AgentMark agentId={active.id} mini className="dock-mark-quiet" />
             ) : (
               <>
-                <DockRing status={hasApproval ? 'waiting' : active.status} />
-                {/* The mark itself turns while the agent works. Claude's is a
-                    twelve-fold starburst, so a slow rotation reads as the
-                    spinner it already is in the CLI rather than as a logo that
-                    has come loose. */}
-                <AgentMark
-                  agentId={active.id}
-                  mini
-                  className={!hasApproval && showsActivity(active.status) && active.status !== 'waiting' ? 'is-working' : ''}
-                />
+                {/* The ring is suppressed where the mark animates itself, or
+                    the orb would carry two spinners at once. */}
+                {usesMarkSpinner(active, hasApproval) ? null : (
+                  <DockRing status={hasApproval ? 'waiting' : active.status} />
+                )}
+                {usesMarkSpinner(active, hasApproval) ? (
+                  <span className="agent-mark agent-mark-claude mark-mini" aria-hidden="true">
+                    <span className="agent-logo">
+                      <ClaudeSpinner />
+                    </span>
+                  </span>
+                ) : (
+                  <AgentMark agentId={active.id} mini />
+                )}
                 {/* The badge has to stay round to fit inside the disc, so the
                     count is capped rather than allowed to widen it. */}
                 {hasApproval ? <span className="dock-badge">{queueCount > 9 ? '9+' : queueCount}</span> : null}
@@ -340,11 +358,15 @@ export function IslandShell(props: IslandShellProps) {
             ) : (
               <>
                 <span className="compact-leading" data-drag-region="true">
-                  <AgentMark
-                    agentId={hasApproval && approval ? approval.agentId : active.id}
-                    compact
-                    className={!hasApproval && showsActivity(active.status) && active.status !== 'waiting' ? 'is-working' : ''}
-                  />
+                  {usesMarkSpinner(active, hasApproval) ? (
+                    <span className="agent-mark agent-mark-claude mark-compact" aria-hidden="true">
+                      <span className="agent-logo">
+                        <ClaudeSpinner />
+                      </span>
+                    </span>
+                  ) : (
+                    <AgentMark agentId={hasApproval && approval ? approval.agentId : active.id} compact />
+                  )}
                   <StatusDot status={hasApproval ? 'waiting' : active.status} />
                 </span>
                 <span className="compact-copy" data-drag-region="true">

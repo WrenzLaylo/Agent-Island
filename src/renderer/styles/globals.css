@@ -558,24 +558,50 @@ select:focus-visible,
 }
 
 /*
- * Working is shown by turning the agent's own mark, not by drawing a blue arc
- * around it. The arc was a generic spinner that said only "something is
- * happening"; the mark says *who* is working, in one glyph, and Claude's is a
- * twelve-fold starburst whose rotation is seamless — it is the same spinner
- * the CLI already uses.
+ * Working, for Claude, is the starburst twinkling in place — each spoke
+ * extending and retracting in turn.
  *
- * The ring is kept for `waiting`, which is a different fact and needs a
- * different colour rather than a different speed.
+ * An earlier attempt rotated the whole mark. That was a misreading of the
+ * reference: its frames differ by petal *length*, not angle. A spinning logo
+ * looks like it has come loose from its container; a pulsing one looks like
+ * the thing is working, which is the whole point.
+ *
+ * Agents whose mark is not radial keep the ring below — rotating those would
+ * look broken, and there is nothing to pulse.
  */
-.agent-mark.is-working svg {
-  animation: mark-spin 2.6s linear infinite;
-  transform-origin: 50% 50%;
+.claude-spinner {
+  width: 100%;
+  height: 100%;
+  /* The official mark hard-codes this fill, so the spinner has to name it too
+     rather than inherit the surface's text colour and render white. */
+  color: #d97757;
 }
 
-@keyframes mark-spin {
-  to {
-    transform: rotate(360deg);
+.claude-spinner rect {
+  fill: currentColor;
+  transform-origin: 12px 12px;
+  animation: claude-petal 1.1s ease-in-out infinite;
+}
+
+@keyframes claude-petal {
+  0%,
+  100% {
+    transform: scaleY(0.55);
+    opacity: 0.45;
   }
+  50% {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+}
+
+/* The generic ring, for agents with nothing to pulse. */
+.dock-ring.status-running circle,
+.dock-ring.status-thinking circle {
+  stroke: var(--blue);
+  /* Three quarters of the circumference, leaving a gap that reads as motion. */
+  stroke-dasharray: 99 33;
+  animation: dock-spin 1.4s linear infinite;
 }
 
 .dock-ring.status-waiting circle {
