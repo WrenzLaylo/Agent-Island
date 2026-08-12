@@ -218,8 +218,21 @@ describe('which calls are worth raising', () => {
     }
   })
 
+  it('raises Glob, which Claude really does ask about', () => {
+    /*
+     * Captured: Claude asked the user to approve a Glob, because the pattern
+     * reached outside the allowed directory. Scope is what its permission
+     * model weighs, not whether the tool reads or writes -- so filtering on
+     * the verb meant that prompt never reached the island.
+     */
+    expect(toolNeedsApproval('Glob')).toBe(true)
+    expect(toolNeedsApproval('LS')).toBe(true)
+    // A subagent can do anything its parent could.
+    expect(toolNeedsApproval('Task')).toBe(true)
+  })
+
   it('answers reads and searches locally, with no card', () => {
-    for (const tool of ['Read', 'Grep', 'Glob', 'TodoWrite', 'WebSearch']) {
+    for (const tool of ['Read', 'Grep', 'TodoWrite', 'WebSearch']) {
       expect(toolNeedsApproval(tool)).toBe(false)
     }
   })

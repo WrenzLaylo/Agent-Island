@@ -22,20 +22,25 @@ export type HookPermission = 'allow' | 'deny' | 'ask'
  * first attempt matched `Bash|Write|Edit|…` and missed real shell commands
  * outright: on Windows the VS Code extension runs them through a tool it
  * displays as **PowerShell**, so nothing matched and nothing was ever raised.
- * Guessing the complete set of tools that mutate is a bet against every future
- * release; guessing the set that only reads is a much smaller one, and being
- * wrong costs an unnecessary card rather than a silent miss.
+ *
+ * `Glob` and `LS` were on this list and have been taken off. Claude asked the
+ * user to approve a `Glob` — the pattern reached outside the allowed
+ * directory, and scope is what its permission model cares about, not whether
+ * the tool happens to read or write. Filtering on the verb meant that prompt
+ * never reached the island. `Task` likewise: a subagent can do anything.
+ *
+ * The property this list is really guessing at is "will Claude ask about
+ * this", which the hook cannot see, because it runs before the check that
+ * decides it. So it stays small and errs towards raising: a needless card is
+ * recoverable, a missed prompt is a question the user never sees.
  */
 const READ_ONLY_TOOLS = new Set([
   'Read',
   'Grep',
-  'Glob',
-  'LS',
   'NotebookRead',
   'TodoWrite',
   'TodoRead',
   'WebSearch',
-  'Task',
   'ExitPlanMode'
 ])
 
