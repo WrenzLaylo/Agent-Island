@@ -74,10 +74,12 @@ available as a setting for anyone who wants island-only answering.
 
 ## Also open
 
-- **#26** — approval cards have dead space with 2 or fewer options, which is
-  now the common case because hook cards always have exactly two. Diagnosed
-  from code, not yet measured: the window's measured correction only ever
-  grows, so an over-estimate is never removed.
+- **#26 is done but unverified on screen.** The window can now shrink as well
+  as grow. Slack could not be read the way a shortfall is — the card fills its
+  container, so both scrollHeight and clientHeight are the container's height
+  and the difference is zero however badly the arithmetic over-allows. The
+  content's real bottom is compared instead. Needs a look at a live two-option
+  card to confirm it actually reclaims the space.
 - **#14** — Hermes verified by the user; Codex dock mark and multi-monitor
   still unverified.
 - Claude Code 2.1.228 is still patched by Kickbacks.ai. Codex was restored and
