@@ -68,9 +68,14 @@ export interface ClaudeApprovalDetection {
 const QUESTION_RE = /^Do you want to\b.*\?$/i
 
 /**
- * Other openers Claude Code uses for the same interactive list — plan mode's
- * "Would you like to proceed?" being the one that left the island blind to
- * every plan approval.
+ * Other openers Claude Code uses for the same interactive list.
+ *
+ * Two were found from real terminals rather than guessed: plan mode's "Would
+ * you like to proceed?", which left the island blind to every plan approval,
+ * and "May I …?", which Claude uses when it asks permission conversationally
+ * rather than through a tool. That second one had fallen all the way through
+ * to the last-resort handoff card, so a question with five perfectly readable
+ * options was shown as "Claude needs input — continue in terminal".
  *
  * These are deliberately *not* treated the same as `QUESTION_RE`. Anchoring on
  * one exact sentence is brittle, but relaxing the wording outright is worse:
@@ -79,7 +84,7 @@ const QUESTION_RE = /^Do you want to\b.*\?$/i
  * something the user was only reading. So a relaxed opener additionally
  * requires the selection caret — see `MARKED_CHOICE_RE`.
  */
-const ALT_QUESTION_RE = /^(?:Would you like to|Ready to|Shall I|Should I)\b.*\?$/i
+const ALT_QUESTION_RE = /^(?:Would you like to|Ready to|Shall I|Should I|May I|Can I|Do you want)\b.*\?$/i
 
 /**
  * A numbered row carrying the caret Claude draws on the highlighted option.

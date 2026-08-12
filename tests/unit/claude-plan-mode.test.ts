@@ -85,3 +85,46 @@ describe('claude plan mode', () => {
     expect(detectClaudeApprovalPanel(noCaret)).not.toBeNull()
   })
 })
+
+describe('conversational permission questions', () => {
+  /**
+   * Captured from a real terminal: Claude asked before acting, rather than
+   * being stopped by a tool permission. The island showed only a handoff card
+   * -- "Claude needs input, continue in terminal" -- for a question whose five
+   * options were right there and perfectly answerable.
+   */
+  const ASKED = [
+    'Permission',
+    '',
+    'May I create the file `C:/Users/OASIS/Downloads/testing.txt`, and then delete it afterwards?',
+    '',
+    '❯ 1. Yes, create then delete',
+    '  2. Create but keep it',
+    '  3. No, don’t create it',
+    '  4. Type something.',
+    '  5. Chat about this',
+    ''
+  ].join(NL)
+
+  it('detects it', () => {
+    expect(detectClaudeApprovalPanel(ASKED)).not.toBeNull()
+  })
+
+  it('keeps all five options verbatim', () => {
+    const detection = detectClaudeApprovalPanel(ASKED)
+    expect(detection?.options.map((option) => option.index)).toEqual([1, 2, 3, 4, 5])
+    expect(detection?.options[0].label).toBe('Yes, create then delete')
+    expect(detection?.options[4].label).toBe('Chat about this')
+  })
+
+  it('is a question, not a permission grant', () => {
+    // Three of the five rows are neither yes nor no; approve/deny language
+    // would misdescribe what is being chosen.
+    expect(detectClaudeApprovalPanel(ASKED)?.isPermission).toBe(false)
+  })
+
+  it('still ignores the same shape in prose', () => {
+    const prose = ['May I suggest a few options?', '  1. Postgres', '  2. SQLite', ''].join(NL)
+    expect(detectClaudeApprovalPanel(prose)).toBeNull()
+  })
+})
