@@ -191,78 +191,18 @@ select:focus-visible,
  *
  * Collapsed and docked are the states with no room to explain themselves.
  * They keep it; the panels do not need it.
- */
-/*
- * Waiting reads as a slow breath rather than a static ring.
  *
- * This animates the outline that was already here instead of adding a second
- * amber signal beside it — three cues for one fact was the mistake that made
- * the earlier version look busy. Still scoped to the collapsed and docked
- * views: on an open card the buttons already say an answer is wanted.
+ * Static, and staying static. This outline once breathed, and the thinking
+ * state had a specular sweep travelling across the surface. Both are removed
+ * at the user's request. The reasoning that introduced them still holds — idle,
+ * thinking and waiting are hard to tell apart at a glance — but a permanent
+ * animation at the edge of someone's vision is a cost paid every second the
+ * app is open. Legibility bought that way is not worth it. If those states
+ * need separating again, it should be with something that holds still.
  */
 .island-surface.view-compact.has-attention,
 .island-surface.view-dock.has-attention {
   border-color: rgba(240, 180, 95, 0.45);
-  animation: island-breathe 2.4s ease-in-out infinite;
-}
-
-@keyframes island-breathe {
-  0%,
-  100% {
-    border-color: rgba(240, 180, 95, 0.28);
-  }
-  50% {
-    border-color: rgba(240, 180, 95, 0.62);
-  }
-}
-
-/*
- * Thinking gets a specular sweep: a highlight travelling across the surface,
- * slow enough to read as ambient rather than as a progress bar.
- *
- * Idle, thinking and waiting used to be distinguishable only by reading the
- * label, which defeats the point of an overlay you are meant to catch out of
- * the corner of your eye. Animating background-position keeps the highlight
- * inside the element's own box, so the corner radius clips it for free at
- * whatever radius the morph is currently passing through.
- */
-.island-surface::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 260ms var(--ease);
-}
-
-.island-surface[data-status='thinking']::after,
-.island-surface[data-status='running']::after {
-  opacity: 1;
-  background-image: linear-gradient(
-    100deg,
-    transparent 38%,
-    rgba(255, 255, 255, 0.09) 50%,
-    transparent 62%
-  );
-  background-size: 260% 100%;
-  animation: island-sweep 2.8s linear infinite;
-}
-
-@keyframes island-sweep {
-  from {
-    background-position: 170% 0;
-  }
-  to {
-    background-position: -70% 0;
-  }
-}
-
-/* Motion is the one thing this setting exists to remove. The states stay
-   distinguishable by colour, which does not move. */
-.stage[data-reduced-motion='true'] .island-surface,
-.stage[data-reduced-motion='true'] .island-surface::after {
-  animation: none;
 }
 
 /* Controls are inert while the window is still resizing so a click cannot land
