@@ -18,6 +18,9 @@ import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 
 /** Identifies our entry among the user's own hooks. */
+/** A single backslash, named so no editor or shell can eat the escape. */
+const BACKSLASH = String.fromCharCode(92)
+
 export const HOOK_MARKER = 'agent-island'
 
 /**
@@ -61,6 +64,23 @@ export function claudeSettingsPath(): string {
   return join(homedir(), '.claude', 'settings.json')
 }
 
+/**
+ * Path, written the only way Claude Code can actually run it.
+ *
+ * Hook commands are executed through a shell, which eats backslashes as escape
+ * characters: `C:\Users\…\claude-hook.cmd` arrived as
+ * `C:UsersOASIS…claude-hook.cmd`, a path that does not exist. The hook was
+ * therefore configured, launched, and failed silently on every single tool
+ * call — indistinguishable from Claude ignoring hooks altogether, which is
+ * exactly what it was mistaken for.
+ *
+ * Windows accepts forward slashes everywhere that matters, and they survive a
+ * shell untouched.
+ */
+export function toHookCommand(path: string): string {
+  return path.split(BACKSLASH).join('/')
+}
+
 export function isOurs(entry: HookEntry): boolean {
   return entry?._source === HOOK_MARKER
 }
@@ -85,7 +105,7 @@ export function withHookInstalled(settings: ClaudeSettings, command: string): Cl
 
   cleaned.push({
     matcher: CLAUDE_HOOK_MATCHER,
-    hooks: [{ type: 'command', command, timeout: 130, _source: HOOK_MARKER }]
+    hooks: [{ type: 'command', command: toHookCommand(command), timeout: 130, _source: HOOK_MARKER }]
   })
 
   hooks.PreToolUse = cleaned

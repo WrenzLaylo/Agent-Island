@@ -11,6 +11,7 @@ import {
   withCodexHookInstalled,
   withCodexHookRemoved,
   CODEX_HOOK_TIMEOUT_SEC,
+  toHookCommand,
   type CodexHooksFile
 } from '../../src/main/agents/codex-hook-install'
 
@@ -98,7 +99,8 @@ describe('hooks.json editing', () => {
     const next = withCodexHookInstalled({}, COMMAND)
     const group = next.hooks?.PermissionRequest?.[0]
     expect(group?.matcher).toBe('')
-    expect(group?.hooks?.[0]).toMatchObject({ type: 'command', command: COMMAND })
+    // Stored with forward slashes; a shell would eat the backslashes.
+    expect(group?.hooks?.[0]).toMatchObject({ type: 'command', command: toHookCommand(COMMAND) })
     expect(codexHookIsInstalled(next)).toBe(true)
   })
 

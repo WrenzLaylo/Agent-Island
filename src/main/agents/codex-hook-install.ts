@@ -17,6 +17,9 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFil
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 
+/** A single backslash, named so no editor or shell can eat the escape. */
+const BACKSLASH = String.fromCharCode(92)
+
 export const CODEX_HOOK_MARKER = 'agent-island'
 
 export interface CodexHookEntry {
@@ -39,6 +42,15 @@ export interface CodexHooksFile {
 export function codexHooksPath(): string {
   const home = process.env.CODEX_HOME || join(homedir(), '.codex')
   return join(home, 'hooks.json')
+}
+
+/**
+ * Same treatment as the Claude hook: a shell eats backslashes, so the command
+ * is written with forward slashes. Not yet observed to bite here, but the
+ * failure it prevents is silent, and Windows accepts either.
+ */
+export function toHookCommand(path: string): string {
+  return path.split(BACKSLASH).join('/')
 }
 
 export function isOurs(entry: CodexHookEntry): boolean {
@@ -67,7 +79,12 @@ export function withCodexHookInstalled(file: CodexHooksFile, command: string): C
     // covered without this needing to change.
     matcher: '',
     hooks: [
-      { type: 'command', command, timeout_sec: CODEX_HOOK_TIMEOUT_SEC, _source: CODEX_HOOK_MARKER }
+      {
+        type: 'command',
+        command: toHookCommand(command),
+        timeout_sec: CODEX_HOOK_TIMEOUT_SEC,
+        _source: CODEX_HOOK_MARKER
+      }
     ]
   })
 

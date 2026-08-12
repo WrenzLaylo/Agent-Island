@@ -13,6 +13,7 @@ import {
   isOurs,
   withHookInstalled,
   withHookRemoved,
+  toHookCommand,
   type ClaudeSettings
 } from '../../src/main/agents/claude-hook-install'
 
@@ -123,7 +124,8 @@ describe('settings.json editing', () => {
     const next = withHookInstalled({}, COMMAND)
     expect(hookIsInstalled(next)).toBe(true)
     const entry = next.hooks?.PreToolUse?.[0].hooks?.[0]
-    expect(entry?.command).toBe(COMMAND)
+    // Stored with forward slashes; see `toHookCommand`.
+    expect(entry?.command).toBe(toHookCommand(COMMAND))
     expect(isOurs(entry!)).toBe(true)
   })
 
@@ -155,7 +157,7 @@ describe('settings.json editing', () => {
     const twice = withHookInstalled(once, 'C:\\new\\path\\claude-hook.cmd')
     const entries = (twice.hooks?.PreToolUse ?? []).flatMap((group) => group.hooks ?? [])
     expect(entries.filter(isOurs)).toHaveLength(1)
-    expect(entries[0].command).toBe('C:\\new\\path\\claude-hook.cmd')
+    expect(entries[0].command).toBe('C:/new/path/claude-hook.cmd')
   })
 
   it('cleans up after itself completely', () => {
@@ -224,5 +226,35 @@ describe('which calls are worth raising', () => {
 
   it('does not raise a card for a payload with no tool name', () => {
     expect(toolNeedsApproval('')).toBe(false)
+  })
+})
+
+describe('the hook command path', () => {
+  const BACKSLASH = String.fromCharCode(92)
+  const WINDOWS_PATH = ['C:', 'Users', 'x', 'AppData', 'Roaming', 'agent-island', 'bin', 'claude-hook.cmd'].join(
+    BACKSLASH
+  )
+
+  it('writes forward slashes', () => {
+    /*
+     * The bug that made the whole feature look impossible. Claude Code runs
+     * hook commands through a shell, which eats backslashes as escapes, so
+     * `C:\Users\…\claude-hook.cmd` arrived as `C:UsersOASIS…claude-hook.cmd` —
+     * a path that does not exist. The hook was configured, launched, and
+     * failed silently on every tool call, which is indistinguishable from
+     * Claude ignoring hooks altogether. It was mistaken for exactly that.
+     */
+    const written = toHookCommand(WINDOWS_PATH)
+    expect(written).not.toContain(BACKSLASH)
+    expect(written).toBe('C:/Users/x/AppData/Roaming/agent-island/bin/claude-hook.cmd')
+  })
+
+  it('leaves a path that is already clean alone', () => {
+    expect(toHookCommand('C:/already/clean.cmd')).toBe('C:/already/clean.cmd')
+  })
+
+  it('applies it to what actually gets installed', () => {
+    const entry = withHookInstalled({}, WINDOWS_PATH).hooks?.PreToolUse?.at(-1)?.hooks?.[0]
+    expect(entry?.command).not.toContain(BACKSLASH)
   })
 })
