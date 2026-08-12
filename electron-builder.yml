@@ -52,6 +52,9 @@ win:
       arch: [x64]
 
 nsis:
+  # Removes the start-at-login entry the app registers for itself, which NSIS
+  # would otherwise leave pointing at a deleted executable.
+  include: build/installer.nsh
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
