@@ -120,6 +120,19 @@ const NO_RE = /^No\b/i
 const CHROME_RE =
   /(esc to cancel|tab to amend|ctrl\+[a-z]|shift\+tab|to cycle|^waiting|^working|^cooked|^\W*$|accept edits on|to explain)/i
 
+/**
+ * Claude's status line, e.g. `✻ Computing… (8s · ↓ 188225 tokens)`.
+ *
+ * Matched by shape, not by word. The verb is whimsical and changes constantly —
+ * Computing, Puzzling, Simmering — so listing them is a losing game. What is
+ * stable is the elapsed timer and token counter in parentheses.
+ *
+ * These repaint several times a second, and without this they were collected as
+ * the request itself: a card asking permission to create one file showed five
+ * lines of "Computing…" where the question should have been.
+ */
+const STATUS_LINE_RE = /\(\d+s\b[^)]*(?:[·⋅]|tokens|[↓↑])/i
+
 /** A tool invocation line, e.g. `Bash(curl …)` or `Edit(src/index.ts)`. */
 const TOOL_CALL_RE = /^[A-Z][A-Za-z]*\(.*\)$/
 
@@ -246,7 +259,7 @@ export function detectClaudeApprovalPanel(rawOutput: string): ClaudeApprovalDete
     // The lines above the question are not all content: Claude's TUI paints key
     // hints and a spinner there too, and they were ending up in the command
     // block as "Esc to cancel · Tab to amend · ctrl+e to explain".
-    .filter((line) => !CHROME_RE.test(line))
+    .filter((line) => !CHROME_RE.test(line) && !STATUS_LINE_RE.test(line))
 
   const isEdit = EDIT_QUESTION_RE.test(question)
   const isCommand = !isEdit && COMMAND_QUESTION_RE.test(question)
@@ -255,7 +268,12 @@ export function detectClaudeApprovalPanel(rawOutput: string): ClaudeApprovalDete
   // actual request and is stable across redraws. The surrounding body is not:
   // Claude repaints spinner frames and key hints there several times a second.
   const toolLine = [...body].reverse().find((line) => TOOL_CALL_RE.test(line))
-  const command = toolLine ?? body.join('\n').trim() ?? question
+  /*
+   * `||`, not `??`: an empty string is not nullish, so a panel whose body is
+   * entirely status lines would produce a card with no command on it at all
+   * rather than falling back to the question.
+   */
+  const command = toolLine || body.join('\n').trim() || question
 
   const baseRisk = classifyCommandRisk(command)
   const risk = isEdit

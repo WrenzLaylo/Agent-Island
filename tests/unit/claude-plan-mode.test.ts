@@ -128,3 +128,36 @@ describe('conversational permission questions', () => {
     expect(detectClaudeApprovalPanel(prose)).toBeNull()
   })
 })
+
+describe('the status line is not the request', () => {
+  /**
+   * Captured live: the card for a one-file permission question showed five
+   * lines of "Computing… (8s . 188225 tokens)" where the question should have
+   * been. Claude repaints that spinner several times a second directly above
+   * the panel, and it was being collected as the request itself.
+   */
+  const WITH_SPINNER = [
+    'Computing… (8s · ↓ 188225 tokens)',
+    'Computing… (8s · ↓ 250 tokens)',
+    'Computing… (9s · ↓ 36388413 tokens)',
+    'May I create the file test.txt, then delete it right after?',
+    '❯ 1. Yes, go ahead',
+    '  2. Create but keep it',
+    '  3. No, cancel',
+    ''
+  ].join(NL)
+
+  it('keeps the spinner out of the card', () => {
+    const detection = detectClaudeApprovalPanel(WITH_SPINNER)
+    expect(detection).not.toBeNull()
+    expect(detection?.command).not.toContain('Computing')
+    expect(detection?.command).not.toContain('tokens')
+  })
+
+  it('falls back to the question when nothing else survives', () => {
+    // `??` would not have: an empty string is not nullish, so filtering every
+    // line away produced a card with no command on it.
+    const detection = detectClaudeApprovalPanel(WITH_SPINNER)
+    expect(detection?.command).toContain('May I create the file test.txt')
+  })
+})
