@@ -11,7 +11,8 @@ import { existsSync, watch, type FSWatcher } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { EventEmitter } from 'node:events'
-import type { ApprovalDecision, ApprovalRequest, RiskLevel } from '../../shared/contracts'
+import type { AgentId, ApprovalDecision, ApprovalRequest, RiskLevel } from '../../shared/contracts'
+import { AGENT_LABELS } from '../../shared/contracts'
 import { classifyCommandRisk } from './hermes-approval'
 
 export interface BridgePendingFile {
@@ -72,14 +73,33 @@ export async function ensureBridgeDirs(root = bridgeRoot()): Promise<void> {
   await mkdir(decisionsDir(root), { recursive: true })
 }
 
+/**
+ * Which agent raised this.
+ *
+ * The bridge was built for the Hermes plugin and hard-coded its name, so once
+ * the Claude and Codex hooks started using the same protocol every one of
+ * their requests appeared under Hermes' logo — the wrong agent named on a
+ * card whose whole job is telling you who is asking.
+ *
+ * `surface` is what each client already sets: `claude-hook`, `codex-hook`.
+ * Anything else stays Hermes, which is what every existing plugin build sends.
+ */
+export function bridgeAgentId(surface: string | undefined): AgentId {
+  if (typeof surface !== 'string') return 'hermes'
+  if (surface.startsWith('claude')) return 'claude'
+  if (surface.startsWith('codex')) return 'codex'
+  return 'hermes'
+}
+
 export function bridgePendingToApproval(file: BridgePendingFile): ApprovalRequest {
   const risk: RiskLevel = classifyCommandRisk(file.command).level
   const reason = classifyCommandRisk(file.command).reason
   const now = Date.now()
+  const agentId = bridgeAgentId(file.surface)
   return {
     id: file.id,
-    agentId: 'hermes',
-    summary: 'Hermes needs permission',
+    agentId,
+    summary: `${AGENT_LABELS[agentId]} needs permission`,
     detail: file.command,
     cwd: file.cwd || '',
     risk,

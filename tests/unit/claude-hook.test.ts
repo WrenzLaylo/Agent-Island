@@ -16,6 +16,7 @@ import {
   toHookCommand,
   type ClaudeSettings
 } from '../../src/main/agents/claude-hook-install'
+import { bridgeAgentId } from '../../src/main/agents/approval-bridge'
 
 const COMMAND = 'C:\\Users\\x\\AppData\\Roaming\\agent-island\\bin\\claude-hook.cmd'
 
@@ -269,5 +270,25 @@ describe('the hook command path', () => {
   it('applies it to what actually gets installed', () => {
     const entry = withHookInstalled({}, WINDOWS_PATH).hooks?.PreToolUse?.at(-1)?.hooks?.[0]
     expect(entry?.command).not.toContain(BACKSLASH)
+  })
+})
+
+describe('which agent a bridge request belongs to', () => {
+  it('reads the surface each client sets', () => {
+    /*
+     * The bridge was built for the Hermes plugin and hard-coded its name, so
+     * once the Claude and Codex hooks started using the same protocol, every
+     * one of their requests appeared under Hermes' logo — the wrong agent
+     * named on a card whose whole job is saying who is asking.
+     */
+    expect(bridgeAgentId('claude-hook')).toBe('claude')
+    expect(bridgeAgentId('codex-hook')).toBe('codex')
+  })
+
+  it('still defaults to Hermes', () => {
+    // Every existing plugin build sends something else, or nothing at all.
+    expect(bridgeAgentId('hermes-plugin')).toBe('hermes')
+    expect(bridgeAgentId(undefined)).toBe('hermes')
+    expect(bridgeAgentId('')).toBe('hermes')
   })
 })
