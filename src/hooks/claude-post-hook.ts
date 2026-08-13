@@ -17,7 +17,7 @@
 import { parseHookInput } from '../shared/claude-hook-protocol'
 import { readStdin } from './bridge-client'
 import { touchSession } from './mirror-store'
-import { clearPendingCall } from '../node/pending-calls'
+import { clearPendingCall, clearSessionCalls } from '../node/pending-calls'
 
 function done(): never {
   process.exit(0)
@@ -30,6 +30,22 @@ function main(): void {
   // Proof of life, exactly as on the way in: a session whose tools are
   // returning is a session that is still there.
   touchSession(input.sessionId, input.cwd)
+
+  /*
+   * `Stop` is registered to this same script because `PostToolUse` does not
+   * fire for a call that failed. Measured: `node -e "process.exit(3)"` left its
+   * record open, and it was still open forty-five seconds later, where a
+   * successful call is cleared within one poll. Without this, every failing
+   * command becomes a card claiming Claude is waiting on a question nobody was
+   * ever asked, for the ten minutes until its TTL.
+   *
+   * The end of a turn is the moment nothing can still be in flight, so it
+   * clears the lot rather than one id.
+   */
+  if (input.event === 'Stop') {
+    clearSessionCalls(input.sessionId)
+    done()
+  }
 
   clearPendingCall(input.sessionId, input.toolUseId)
   done()

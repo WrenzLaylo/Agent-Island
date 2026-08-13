@@ -114,11 +114,36 @@ export function hookCardFor(
   now: number,
   permissionAsked: boolean
 ): { call: PendingCall; certain: boolean } | null {
-  const oldest = calls[0]
+  const oldest = newestBatch(calls)[0]
   if (!oldest) return null
   if (permissionAsked) return { call: oldest, certain: true }
   if (now - oldest.at >= CARD_GRACE_MS) return { call: oldest, certain: false }
   return null
+}
+
+/**
+ * Calls issued together with the most recent one.
+ *
+ * A session waiting on a permission dialog cannot start new work — the turn is
+ * blocked until the user answers. So a record with a later call after it was
+ * never waiting on anything; it belongs to a call that has already finished and
+ * said nothing about it.
+ *
+ * That happens because `PostToolUse` does not fire for a call that *failed*.
+ * Measured: `node -e "process.exit(3)"` left its record open and still open
+ * forty-five seconds later, where a successful call clears within one poll. The
+ * card it produced named a command that had already exited.
+ *
+ * The window exists because Claude issues parallel calls in a burst, and those
+ * arrive milliseconds apart — one of them may genuinely be the one being asked
+ * about, so the whole burst stays eligible.
+ */
+const BATCH_WINDOW_MS = 2_000
+
+function newestBatch(calls: PendingCall[]): PendingCall[] {
+  if (calls.length < 2) return calls
+  const newest = calls[calls.length - 1].at
+  return calls.filter((call) => newest - call.at <= BATCH_WINDOW_MS)
 }
 
 function normaliseCwd(cwd: string | undefined): string {

@@ -78,6 +78,8 @@ export interface ParsedHookInput {
    * be cleared by whichever call finished first.
    */
   toolUseId: string
+  /** `PreToolUse`, `PostToolUse`, `Stop` — one script serves several. */
+  event: string
 }
 
 export function parseHookInput(raw: string): ParsedHookInput | null {
@@ -95,7 +97,8 @@ export function parseHookInput(raw: string): ParsedHookInput | null {
         value.tool_input && typeof value.tool_input === 'object'
           ? (value.tool_input as Record<string, unknown>)
           : {},
-      toolUseId: typeof value.tool_use_id === 'string' ? value.tool_use_id : ''
+      toolUseId: typeof value.tool_use_id === 'string' ? value.tool_use_id : '',
+      event: typeof value.hook_event_name === 'string' ? value.hook_event_name : ''
     }
   } catch {
     return null

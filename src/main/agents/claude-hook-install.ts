@@ -151,6 +151,21 @@ export function withHookInstalled(
   ]
 
   /*
+   * The same script again, because PostToolUse does not fire for a call that
+   * failed and its record would otherwise stay open until its TTL. The end of a
+   * turn is the one moment nothing can still be in flight.
+   */
+  hooks.Stop = [
+    ...withoutOurs(hooks.Stop),
+    {
+      matcher: '',
+      hooks: [
+        { type: 'command', command: toHookCommand(commands.post), timeout: 10, _source: HOOK_MARKER }
+      ]
+    }
+  ]
+
+  /*
    * Notification does not fire in the VS Code extension — measured — so it is
    * an accelerator rather than the mechanism. Where a host does send it, it
    * tells the island that a call in flight is genuinely a permission prompt,
@@ -200,7 +215,14 @@ export function withHookRemoved(settings: ClaudeSettings): ClaudeSettings {
   const hooks: Record<string, HookMatcher[]> = { ...next.hooks }
   // Every event we might have written to, not just PreToolUse — leaving a
   // SessionStart entry behind would keep publishing sessions after removal.
-  for (const event of ['PreToolUse', 'PostToolUse', 'Notification', 'SessionStart', 'SessionEnd']) {
+  for (const event of [
+    'PreToolUse',
+    'PostToolUse',
+    'Stop',
+    'Notification',
+    'SessionStart',
+    'SessionEnd'
+  ]) {
     if (!Array.isArray(hooks[event])) continue
     const cleaned = withoutOurs(hooks[event])
     if (cleaned.length > 0) hooks[event] = cleaned

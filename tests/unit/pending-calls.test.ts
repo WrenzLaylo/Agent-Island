@@ -131,8 +131,43 @@ describe('when a call in flight becomes a card', () => {
     expect(card?.certain).toBe(true)
   })
 
-  it('describes the call that has waited longest', () => {
-    const calls = [call({ toolUseId: 'old', at: now - 60_000 }), call({ toolUseId: 'new', at: now })]
+  it('ignores a call that later work has already overtaken', () => {
+    /*
+     * A session waiting on a permission dialog cannot start new work, so a
+     * record with a later call after it was never waiting on anything.
+     *
+     * This is how a *failed* call is recognised: PostToolUse does not fire for
+     * one. Measured — `node -e "process.exit(3)"` left its record open and it
+     * was still open forty-five seconds later, producing a card that named a
+     * command which had already exited.
+     */
+    const calls = [
+      call({ toolUseId: 'failed', at: now - 60_000 }),
+      call({ toolUseId: 'live', at: now - CARD_GRACE_MS - 1 })
+    ]
+    expect(hookCardFor(calls, now, false)?.call.toolUseId).toBe('live')
+  })
+
+  it('shows nothing while the only call left is still inside its grace', () => {
+    // The overtaken record is discarded, and what overtook it has not been
+    // open long enough to mean anything yet.
+    const calls = [call({ toolUseId: 'failed', at: now - 60_000 }), call({ toolUseId: 'live', at: now })]
+    expect(hookCardFor(calls, now, false)).toBeNull()
+  })
+
+  it('keeps a whole parallel burst eligible', () => {
+    // Claude issues parallel calls milliseconds apart, and the one being asked
+    // about may be any of them, so the burst is not treated as supersession.
+    const calls = [
+      call({ toolUseId: 'a', at: now - CARD_GRACE_MS - 300 }),
+      call({ toolUseId: 'b', at: now - CARD_GRACE_MS - 200 }),
+      call({ toolUseId: 'c', at: now - CARD_GRACE_MS - 100 })
+    ]
+    expect(hookCardFor(calls, now, false)?.call.toolUseId).toBe('a')
+  })
+
+  it('describes the call that has waited longest when nothing overtook it', () => {
+    const calls = [call({ toolUseId: 'old', at: now - 60_000 })]
     expect(hookCardFor(calls, now, false)?.call.toolUseId).toBe('old')
   })
 })
