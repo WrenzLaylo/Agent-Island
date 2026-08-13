@@ -17,6 +17,7 @@ import {
   hookCardFor,
   wrapperOwnsCwd
 } from '../../src/main/agents/session-watcher'
+import { childrenMeanBusy } from '../../src/node/win32-windows'
 import type { AgentSessionRecord } from '../../src/shared/session-registry'
 
 let root: string
@@ -133,6 +134,31 @@ describe('when a call in flight becomes a card', () => {
   it('describes the call that has waited longest', () => {
     const calls = [call({ toolUseId: 'old', at: now - 60_000 }), call({ toolUseId: 'new', at: now })]
     expect(hookCardFor(calls, now, false)?.call.toolUseId).toBe('old')
+  })
+})
+
+describe('telling a running command from a waiting one', () => {
+  it('ignores the console host Windows attaches for the whole process life', () => {
+    /*
+     * Sampled once a second for 90 seconds against a live session: 88 samples
+     * had only conhost.exe, and the two that also had bash.exe were exactly the
+     * two tool calls made in that window. Counting conhost would report every
+     * session as permanently busy and suppress every card.
+     */
+    expect(childrenMeanBusy(['conhost.exe'])).toBe(false)
+    expect(childrenMeanBusy(['conhost.exe', 'bash.exe'])).toBe(true)
+  })
+
+  it('reads an empty child list as waiting', () => {
+    // Permission is asked before the command runs, so no child plus an open
+    // call means the question is still on the user's screen.
+    expect(childrenMeanBusy([])).toBe(false)
+    expect(childrenMeanBusy(['', '   '])).toBe(false)
+  })
+
+  it('does not care how the query cased or padded the name', () => {
+    expect(childrenMeanBusy([' ConHost.EXE '])).toBe(false)
+    expect(childrenMeanBusy([' PowerShell.exe '])).toBe(true)
   })
 })
 

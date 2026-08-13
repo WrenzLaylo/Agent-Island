@@ -273,6 +273,53 @@ export async function windowExists(hwnd: number): Promise<boolean> {
   }
 }
 
+/**
+ * Windows attaches one of these to a console-owning process and leaves it there
+ * for the process's whole life, so it says nothing about what the agent is
+ * doing and must not be counted as work in progress.
+ */
+const IDLE_CHILDREN = new Set(['conhost.exe'])
+
+/**
+ * Whether this agent is running a command right now.
+ *
+ * Distinguishes the two things a call in flight can mean, which are otherwise
+ * identical from outside the agent: waiting for the user to answer a permission
+ * dialog, and simply taking a long time.
+ *
+ * Claude spawns a shell per command and does not keep one alive between calls.
+ * Sampled once a second for 90 seconds against a live session: 88 samples had
+ * only `conhost.exe`, and the two that also had `bash.exe` were exactly the two
+ * tool calls made in that window.
+ *
+ * Permission is asked *before* the command runs, which makes this conclusive
+ * rather than probabilistic. A child means the user has already answered and
+ * the work is under way; no child, with a call still open, means the question
+ * is still on their screen.
+ *
+ * Returns false when it cannot tell, so an unanswerable query costs a card that
+ * appears rather than one that is silently withheld.
+ */
+export async function isRunningCommand(pid: number): Promise<boolean> {
+  if (process.platform !== 'win32' || !Number.isFinite(pid) || pid <= 0) return false
+  try {
+    const out = await runPowerShell(
+      `Get-CimInstance Win32_Process -Filter "ParentProcessId=${Math.trunc(pid)}" |` +
+        ' Select-Object -ExpandProperty Name'
+    )
+    return childrenMeanBusy(out.split(/\r?\n/))
+  } catch {
+    return false
+  }
+}
+
+/** The judgement in `isRunningCommand`, separated from the query that feeds it. */
+export function childrenMeanBusy(names: string[]): boolean {
+  return names
+    .map((name) => name.trim().toLowerCase())
+    .some((name) => name.length > 0 && !IDLE_CHILDREN.has(name))
+}
+
 export function processAlive(pid: number): boolean {
   if (!Number.isFinite(pid) || pid <= 0) return false
   try {

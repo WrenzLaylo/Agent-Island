@@ -21,7 +21,7 @@ import {
   type SessionPromptRecord
 } from '../../shared/session-registry'
 import { decisionsDir, ensureRegistryDirs, promptsDir, sessionsDir } from '../../node/registry-paths'
-import { processAlive } from '../../node/win32-windows'
+import { isRunningCommand, processAlive } from '../../node/win32-windows'
 import {
   PENDING_CALL_TTL_MS,
   permissionWasAsked,
@@ -171,6 +171,12 @@ export interface SessionWatcherEvents {
 export class SessionWatcher extends EventEmitter {
   private sessions = new Map<string, AgentSessionRecord>()
   private prompts = new Map<string, SessionPromptRecord>()
+  /**
+   * Per call: is it running (true), waiting (false), or still being asked
+   * (null)? Keyed `sessionId:toolUseId` and dropped when the call closes, so
+   * this cannot outgrow the calls actually in flight.
+   */
+  private callVerdicts = new Map<string, boolean | null>()
   private watchers: FSWatcher[] = []
   private timer: NodeJS.Timeout | null = null
 
@@ -257,7 +263,33 @@ export class SessionWatcher extends EventEmitter {
    * session — so anything here would be the same question twice, one copy of
    * which does nothing.
    */
+  /**
+   * Is this call waiting for the user, or merely slow?
+   *
+   * Asked once per call, the first poll after its grace period elapses, and
+   * remembered — the answer cannot change. Permission is requested before a
+   * command runs, so a shell child at this moment means the user already
+   * answered and the work is under way.
+   *
+   * `false` while the answer is outstanding. A card a few hundred milliseconds
+   * late is a better failure than one raised on a guess and retracted.
+   */
+  private callIsWaiting(record: AgentSessionRecord, call: PendingCall): boolean {
+    const key = `${record.id}:${call.toolUseId}`
+    const verdict = this.callVerdicts.get(key)
+    if (verdict === undefined) {
+      this.callVerdicts.set(key, null)
+      void isRunningCommand(record.pid).then(
+        (running) => this.callVerdicts.set(key, running),
+        () => this.callVerdicts.set(key, false)
+      )
+      return false
+    }
+    return verdict === null ? false : !verdict
+  }
+
   private syncHookPrompts(sessions: Map<string, AgentSessionRecord>, now: number): void {
+    const live = new Set<string>()
     for (const record of sessions.values()) {
       if (!record.id.startsWith(HOOK_SESSION_PREFIX)) continue
       const sessionId = record.id.slice(HOOK_SESSION_PREFIX.length)
@@ -268,6 +300,16 @@ export class SessionWatcher extends EventEmitter {
         : hookCardFor(readPendingCalls(sessionId, now), now, permissionWasAsked(sessionId, now))
 
       if (!card) {
+        if (existsSync(target)) rmSync(target, { force: true })
+        continue
+      }
+
+      live.add(`${record.id}:${card.call.toolUseId}`)
+
+      // `certain` came from Notification, which only fires for a real
+      // permission, so there is nothing left to check. Everything else is a
+      // guess until the process tree settles it.
+      if (!card.certain && !this.callIsWaiting(record, card.call)) {
         if (existsSync(target)) rmSync(target, { force: true })
         continue
       }
@@ -309,6 +351,13 @@ export class SessionWatcher extends EventEmitter {
       } catch {
         // The next poll tries again.
       }
+    }
+
+    // A verdict is about one call, and is worthless the moment that call
+    // closes. Dropping them here is what keeps the map the size of the work
+    // actually in flight rather than the size of the session's history.
+    for (const key of this.callVerdicts.keys()) {
+      if (!live.has(key)) this.callVerdicts.delete(key)
     }
   }
 
