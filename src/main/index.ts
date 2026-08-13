@@ -23,6 +23,7 @@ import { codexHookStatus, installCodexHook, uninstallCodexHook } from './agents/
 import {
   claudeHookLauncher,
   claudeNotifyHookLauncher,
+  claudePostHookLauncher,
   claudeSessionHookLauncher,
   codexHookLauncher,
   ensureLauncherScripts,
@@ -592,6 +593,7 @@ function rebuildTrayMenu(): void {
             : installClaudeHook({
                 record: claudeHookLauncher(),
                 notify: claudeNotifyHookLauncher(),
+                post: claudePostHookLauncher(),
                 session: claudeSessionHookLauncher()
               })
           if (!result.ok) console.error('agent-island: claude hook:', result.error)
@@ -954,6 +956,7 @@ function registerIpc(): void {
   ipcMain.handle('island:install-claude-hook', () => installClaudeHook({
                 record: claudeHookLauncher(),
                 notify: claudeNotifyHookLauncher(),
+                post: claudePostHookLauncher(),
                 session: claudeSessionHookLauncher()
               }))
   ipcMain.handle('island:uninstall-claude-hook', () => uninstallClaudeHook())

@@ -63,6 +63,7 @@ export interface HookInput {
   hook_event_name?: string
   tool_name?: string
   tool_input?: Record<string, unknown>
+  tool_use_id?: string
 }
 
 export interface ParsedHookInput {
@@ -70,6 +71,13 @@ export interface ParsedHookInput {
   cwd: string
   toolName: string
   toolInput: Record<string, unknown>
+  /**
+   * Claude's id for this specific call, present on PreToolUse and PostToolUse
+   * alike. It is what lets the second event close the record the first opened,
+   * which matters because tools run in parallel and a session-wide record would
+   * be cleared by whichever call finished first.
+   */
+  toolUseId: string
 }
 
 export function parseHookInput(raw: string): ParsedHookInput | null {
@@ -86,7 +94,8 @@ export function parseHookInput(raw: string): ParsedHookInput | null {
       toolInput:
         value.tool_input && typeof value.tool_input === 'object'
           ? (value.tool_input as Record<string, unknown>)
-          : {}
+          : {},
+      toolUseId: typeof value.tool_use_id === 'string' ? value.tool_use_id : ''
     }
   } catch {
     return null

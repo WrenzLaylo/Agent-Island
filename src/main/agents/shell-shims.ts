@@ -69,7 +69,12 @@ export function claudeSessionHookLauncher(): string {
   return join(launcherDir(), 'claude-session-hook.cmd')
 }
 
-/** Notification, which raises the card beside the agent's own prompt. */
+/** PostToolUse, which closes the record PreToolUse opened. */
+export function claudePostHookLauncher(): string {
+  return join(launcherDir(), 'claude-post-hook.cmd')
+}
+
+/** Notification, which confirms a call in flight really is a permission. */
 export function claudeNotifyHookLauncher(): string {
   return join(launcherDir(), 'claude-notify-hook.cmd')
 }
@@ -149,7 +154,8 @@ export function ensureLauncherScripts(): string {
    * out/ does not leave the user's settings pointing at a file that is gone.
    * Regenerated here on every launch for exactly that reason.
    */
-  for (const hook of ['claude', 'codex', 'claude-session', 'claude-notify']) writeHookLauncher(dir, exe, hook)
+  for (const hook of ['claude', 'codex', 'claude-session', 'claude-notify', 'claude-post'])
+    writeHookLauncher(dir, exe, hook)
 
   return dir
 }

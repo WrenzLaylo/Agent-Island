@@ -32,6 +32,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { readStdin } from './bridge-client'
 import { agentPid } from './mirror-store'
+import { clearSessionCalls } from '../node/pending-calls'
 
 function registryRoot(): string {
   const local = process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local')
@@ -63,6 +64,10 @@ function main(): void {
   if (payload.hook_event_name === 'SessionEnd') {
     try {
       rmSync(file, { force: true })
+      // Anything still open belonged to a session that no longer exists. The
+      // TTL would clear it eventually; leaving a card up for ten minutes after
+      // the chat closed is not "eventually" enough.
+      clearSessionCalls(sessionId)
     } catch {
       // A session record that outlives its session is reaped by age anyway.
     }

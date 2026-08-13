@@ -10,7 +10,7 @@
  * happily try to raise.
  */
 import { EventEmitter } from 'node:events'
-import { existsSync, readdirSync, readFileSync, rmSync, statSync, watch, writeFileSync, type FSWatcher } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, renameSync, rmSync, statSync, watch, writeFileSync, type FSWatcher } from 'node:fs'
 import { join } from 'node:path'
 import {
   isSessionStale,
@@ -22,8 +22,35 @@ import {
 } from '../../shared/session-registry'
 import { decisionsDir, ensureRegistryDirs, promptsDir, sessionsDir } from '../../node/registry-paths'
 import { processAlive } from '../../node/win32-windows'
+import {
+  PENDING_CALL_TTL_MS,
+  permissionWasAsked,
+  readPendingCalls,
+  type PendingCall
+} from '../../node/pending-calls'
 
 const POLL_MS = 1000
+
+/** Session ids published by hooks rather than by an `island` wrapper. */
+const HOOK_SESSION_PREFIX = 'claude-hook-'
+
+/**
+ * How long a call stays open before the island shows it.
+ *
+ * `PreToolUse` and `PostToolUse` bracket every call, and the gap between them
+ * covers two different situations that are indistinguishable from outside the
+ * agent: a permission dialog waiting on a human, and a command that is simply
+ * slow. Raising instantly would put a card in front of every tool call in the
+ * session, which is unusable within seconds of real work.
+ *
+ * A delay separates most of them, because most calls return in well under a
+ * second while a person reading a dialog takes far longer. It does not separate
+ * all of them — a long build holds the gap open too — so the card says so in
+ * that case rather than asserting something it cannot know. `Notification`
+ * removes the doubt entirely in hosts that send it; the VS Code extension does
+ * not, which is why this exists.
+ */
+export const CARD_GRACE_MS = 12_000
 
 /**
  * How long a session file may stay unreadable before it is treated as debris.
@@ -72,6 +99,52 @@ export function sessionShouldBeReaped(
   const hasPid = Number.isFinite(record.pid) && record.pid > 0
   if (!hasPid) return fileAgeMs > UNKNOWN_LIVENESS_TTL_MS
   return !isAlive(record.pid)
+}
+
+/**
+ * Which call in flight, if any, deserves a card right now.
+ *
+ * The oldest one: it has been open longest, so it is the one a blocked session
+ * is most likely blocked on. `certain` says whether the host actually told us
+ * this is a permission, which is the difference between naming the situation
+ * and guessing at it — and the card is worded from it.
+ */
+export function hookCardFor(
+  calls: PendingCall[],
+  now: number,
+  permissionAsked: boolean
+): { call: PendingCall; certain: boolean } | null {
+  const oldest = calls[0]
+  if (!oldest) return null
+  if (permissionAsked) return { call: oldest, certain: true }
+  if (now - oldest.at >= CARD_GRACE_MS) return { call: oldest, certain: false }
+  return null
+}
+
+function normaliseCwd(cwd: string | undefined): string {
+  return String(cwd ?? '').replace(/[\\/]+$/, '').toLowerCase()
+}
+
+/**
+ * Whether an `island` wrapper is already watching this session's directory.
+ *
+ * The same hooks fire in a terminal, where the wrapper raises a card that can
+ * actually be answered. Matched on cwd because the two mechanisms share no id:
+ * the wrapper mints its own uuid and Claude Code mints another.
+ */
+export function wrapperOwnsCwd(
+  sessions: Map<string, AgentSessionRecord>,
+  record: AgentSessionRecord
+): boolean {
+  const target = normaliseCwd(record.cwd)
+  if (!target) return false
+  for (const other of sessions.values()) {
+    if (other.id === record.id) continue
+    if (other.id.startsWith(HOOK_SESSION_PREFIX)) continue
+    if (other.agentId !== 'claude') continue
+    if (normaliseCwd(other.cwd) === target) return true
+  }
+  return false
 }
 
 /** How long ago a file was last written, or 0 when it cannot be read. */
@@ -176,6 +249,69 @@ export class SessionWatcher extends EventEmitter {
     return out
   }
 
+  /**
+   * Turn calls that are still in flight into cards, and take them down again.
+   *
+   * Only for sessions published by hooks. A wrapper scrapes its terminal and
+   * raises its own prompt — an *answerable* one, since it can type into that
+   * session — so anything here would be the same question twice, one copy of
+   * which does nothing.
+   */
+  private syncHookPrompts(sessions: Map<string, AgentSessionRecord>, now: number): void {
+    for (const record of sessions.values()) {
+      if (!record.id.startsWith(HOOK_SESSION_PREFIX)) continue
+      const sessionId = record.id.slice(HOOK_SESSION_PREFIX.length)
+      const target = join(promptsDir(), `${record.id}.json`)
+
+      const card = wrapperOwnsCwd(sessions, record)
+        ? null
+        : hookCardFor(readPendingCalls(sessionId, now), now, permissionWasAsked(sessionId, now))
+
+      if (!card) {
+        if (existsSync(target)) rmSync(target, { force: true })
+        continue
+      }
+
+      /*
+       * Rewriting an identical card every second would mint a new promptId each
+       * time, and the renderer keys its animation on that — the card would
+       * re-enter once a second for as long as the user took to answer.
+       */
+      const fingerprint = `${record.id}-${card.call.toolUseId}-${card.certain}`
+      if (existsSync(target)) {
+        try {
+          const existing = parsePromptRecord(readFileSync(target, 'utf8'))
+          if (existing?.fingerprint === fingerprint) continue
+        } catch {
+          // Unreadable: fall through and replace it.
+        }
+      }
+
+      const prompt: SessionPromptRecord = {
+        sessionId: record.id,
+        agentId: 'claude',
+        // Never 'approval'. The island cannot answer this — there is no
+        // terminal to type into and no decision file the extension reads — and
+        // offering buttons that do nothing is worse than offering none.
+        kind: 'handoff',
+        promptId: `${record.id}-${card.call.toolUseId}`,
+        title: card.certain ? 'Claude needs your permission' : 'Claude may need you',
+        detail: card.call.command,
+        cwd: card.call.cwd || record.cwd,
+        createdAt: card.call.at,
+        expiresAt: card.call.at + PENDING_CALL_TTL_MS,
+        fingerprint
+      }
+      try {
+        const tmp = `${target}.tmp`
+        writeFileSync(tmp, JSON.stringify(prompt, null, 2), 'utf8')
+        renameSync(tmp, target)
+      } catch {
+        // The next poll tries again.
+      }
+    }
+  }
+
   private refresh(): void {
     const now = Date.now()
     const nextSessions = new Map<string, AgentSessionRecord>()
@@ -207,6 +343,10 @@ export class SessionWatcher extends EventEmitter {
       }
       nextSessions.set(record.id, record)
     }
+
+    // Before prompts are read, so a card synthesised now is picked up by the
+    // same pass rather than the next one.
+    this.syncHookPrompts(nextSessions, now)
 
     for (const [id, record] of nextSessions) {
       if (!this.sessions.has(id)) this.emit('session-added', record)

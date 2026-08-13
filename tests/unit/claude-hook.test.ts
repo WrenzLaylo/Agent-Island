@@ -21,8 +21,9 @@ import { bridgeAgentId } from '../../src/main/agents/approval-bridge'
 const COMMAND = 'C:\\Users\\x\\AppData\\Roaming\\agent-island\\bin\\claude-hook.cmd'
 const NOTIFY_CMD = 'C:/Users/x/AppData/Roaming/agent-island/bin/claude-notify-hook.cmd'
 const SESSION_COMMAND = 'C:/Users/x/AppData/Roaming/agent-island/bin/claude-session-hook.cmd'
-/** All four events install together; see `HookCommands`. */
-const CMDS = { record: COMMAND, notify: NOTIFY_CMD, session: SESSION_COMMAND }
+const POST_CMD = 'C:/Users/x/AppData/Roaming/agent-island/bin/claude-post-hook.cmd'
+/** All five events install together; see `HookCommands`. */
+const CMDS = { record: COMMAND, post: POST_CMD, notify: NOTIFY_CMD, session: SESSION_COMMAND }
 
 describe('hook input', () => {
   it('reads what Claude Code sends', () => {

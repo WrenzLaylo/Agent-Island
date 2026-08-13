@@ -25,7 +25,8 @@ import {
   toolNeedsApproval
 } from '../shared/claude-hook-protocol'
 import { readStdin } from './bridge-client'
-import { recordCall, touchSession } from './mirror-store'
+import { touchSession } from './mirror-store'
+import { writePendingCall } from '../node/pending-calls'
 
 function done(): never {
   // Mirror mode observes only. A permissionDecision here would override
@@ -45,7 +46,11 @@ function main(): void {
   // fresh is what stops the island greying the row out.
   touchSession(input.sessionId, input.cwd)
 
-  recordCall(input.sessionId, {
+  // Opened here, closed by `claude-post-hook` when the call returns. While it
+  // is open the call is either waiting for the user or still running, and the
+  // island decides which — it is the only party awake during the wait.
+  writePendingCall(input.sessionId, {
+    toolUseId: input.toolUseId,
     toolName: input.toolName,
     command: describeToolCall(input.toolName, input.toolInput),
     cwd: input.cwd,

@@ -20,7 +20,8 @@ export default defineConfig({
           'claude-hook': resolve('src/hooks/claude-hook.ts'),
           'codex-hook': resolve('src/hooks/codex-hook.ts'),
           'claude-session-hook': resolve('src/hooks/claude-session-hook.ts'),
-          'claude-notify-hook': resolve('src/hooks/claude-notify-hook.ts')
+          'claude-notify-hook': resolve('src/hooks/claude-notify-hook.ts'),
+          'claude-post-hook': resolve('src/hooks/claude-post-hook.ts')
         }
       }
     }
