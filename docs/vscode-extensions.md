@@ -100,11 +100,39 @@ contains no backslash at all.
 The lesson generalises: when something does not work, check that the mechanism
 runs at all before concluding the mechanism is unavailable.
 
-### Still to verify
+### Which events actually reach the extension
 
-The VS Code extension specifically. The hook is confirmed firing for a CLI
-session; whether the extension's `--settings` layer admits user-level hooks is
-a separate question, and the earlier negative result was taken with the broken
-path, so it proves nothing either way.
+Settled by running both hosts at once and reading the registry.
 
-The Codex hook is likewise untested in a live session.
+| Event | CLI | VS Code extension |
+|---|---|---|
+| `PreToolUse` | yes | yes |
+| `PostToolUse` | yes, unless the call **failed** | same |
+| `Stop` | yes | yes |
+| `SessionStart` / `SessionEnd` | yes | yes |
+| `Notification` | yes | **no** |
+
+The extension's `--settings` layer does admit user-level hooks — that question
+is answered by everything else in the column firing.
+
+`Notification` not firing is what forced the card to be raised from `PreToolUse`
+instead. It was measured twice: the first attempt is void, because it was taken
+while a pid bug was deleting prompt files twenty seconds after every tool call,
+so it could not have observed a card either way. Repeated after that fix,
+against a real `git status --porcelain` prompt, `PreToolUse` recorded the call
+and no notification arrived. A CLI session in the same registry, at the same
+time, did produce one.
+
+`PostToolUse` not firing for a failed call is the other trap. It is
+indistinguishable from a call still waiting, so a record left open by
+`node -e "process.exit(3)"` became a card claiming Claude needed permission for
+a command that had already exited. See `docs/handover.md` for the two signals
+that close it.
+
+One more thing the extension does differently: on Windows it runs shell commands
+through a tool it *displays* as **PowerShell**, while the hook payload names the
+tool `Bash`. Matching on tool names in the hook matcher therefore missed every
+real shell command, which is why the matcher takes everything and the hook
+decides.
+
+The Codex hook is still untested in a live session.
