@@ -12,7 +12,7 @@ import type {
 import { AGENT_ORDER } from '@shared/contracts'
 import { AgentMark } from './AgentMark'
 import { folderName, type SessionRow } from '@shared/session-list'
-import { handoffCaveat } from '@shared/terminal-handoff'
+import { handoffCaveat, handoffHeadline } from '@shared/terminal-handoff'
 import { AgentTabs } from './AgentTabs'
 import { SessionList } from './SessionList'
 import { ApprovalCard } from './ApprovalCard'
@@ -374,13 +374,15 @@ export function IslandShell(props: IslandShellProps) {
             className="island-content handoff-view"
             {...fade}
             role="dialog"
-            aria-label={`${state.agents[terminalInput.agentId].label} needs input in the terminal`}
+            aria-label={handoffHeadline(terminalInput.title, state.agents[terminalInput.agentId].label)}
           >
             <div className="panel-header handoff-header" data-drag-region="true">
               <div className="header-agent">
                 <span className="header-mark-wrap"><AgentMark agentId={terminalInput.agentId} compact /><StatusDot status="waiting" /></span>
                 <span>
-                  <strong>{state.agents[terminalInput.agentId].label} needs input</strong>
+                  <strong>
+                    {handoffHeadline(terminalInput.title, state.agents[terminalInput.agentId].label)}
+                  </strong>
                   <small>{terminalInput.terminalLabel ?? 'Terminal'}</small>
                 </span>
               </div>
@@ -393,7 +395,11 @@ export function IslandShell(props: IslandShellProps) {
               </button>
             </div>
             <div className="handoff-body">
-              <p>{terminalInput.detail?.split('\n')[0] || terminalInput.title}</p>
+              {/* The title moved to the header, so falling back to it here
+                  printed the same sentence twice on any card without detail. */}
+              {terminalInput.detail?.split('\n')[0] ? (
+                <p>{terminalInput.detail.split('\n')[0]}</p>
+              ) : null}
               {terminalInput.canRaiseWindow === false ? (
                 <p className="handoff-note">
                   {terminalInput.terminalLabel ?? 'This terminal'} does not expose a window Agent
@@ -419,10 +425,19 @@ export function IslandShell(props: IslandShellProps) {
               )}
               {/* Handoff reaches the window but not always the tab inside it.
                   Saying so beats a button that quietly does three quarters of
-                  what it promises. */}
-              {handoffCaveat(terminalInput.terminalKind, terminalInput.terminalLabel) ? (
+                  what it promises — but only where a window is raised at all,
+                  or the note contradicts the line above it. */}
+              {handoffCaveat(
+                terminalInput.terminalKind,
+                terminalInput.terminalLabel,
+                terminalInput.canRaiseWindow !== false
+              ) ? (
                 <p className="handoff-note">
-                  {handoffCaveat(terminalInput.terminalKind, terminalInput.terminalLabel)}
+                  {handoffCaveat(
+                    terminalInput.terminalKind,
+                    terminalInput.terminalLabel,
+                    terminalInput.canRaiseWindow !== false
+                  )}
                 </p>
               ) : null}
             </div>
