@@ -33,13 +33,59 @@ const POLL_MS = 1000
  */
 export const CORRUPT_SESSION_TTL_MS = 60_000
 
+/**
+ * How long a session of unknown liveness may sit idle before it is reaped.
+ *
+ * Only reachable by a session whose record carries no usable pid — an older
+ * Claude Code that does not export `CLAUDE_PID`. Judging one of those by
+ * heartbeat is wrong (nothing heartbeats a hook-hosted session) and judging it
+ * by pid is worse, because pid 0 fails a liveness test that "dead" and "cannot
+ * tell" must not share. So it is judged by nothing but age, generously: the cost
+ * of waiting is one stale row, and the cost of being wrong is deleting the card
+ * a user is reading right now.
+ */
+export const UNKNOWN_LIVENESS_TTL_MS = 12 * 60 * 60_000
+
+/**
+ * Whether a record describes a session that is definitely gone.
+ *
+ * Kept pure, and taking its liveness test as an argument, because the bug this
+ * replaces was a single `&&` that could not be exercised without a real process
+ * tree: `isSessionStale(record) && !processAlive(record.pid)`.
+ *
+ * The flaw was in the second half. A record with no usable pid answers
+ * `processAlive(0)` with false — the same answer a genuinely dead process gives
+ * — so "cannot tell" and "dead" became the same verdict. Every hook-hosted
+ * session was therefore deleted `SESSION_STALE_MS` after its last tool call,
+ * taking its prompt file with it, during exactly the pause where the user is
+ * reading the dialog the card mirrors.
+ */
+export function sessionShouldBeReaped(
+  record: AgentSessionRecord,
+  now: number,
+  fileAgeMs: number,
+  isAlive: (pid: number) => boolean = processAlive
+): boolean {
+  // A heartbeat is still the cheap first filter: anything checking in recently
+  // is live whatever its pid says.
+  if (!isSessionStale(record, now)) return false
+  const hasPid = Number.isFinite(record.pid) && record.pid > 0
+  if (!hasPid) return fileAgeMs > UNKNOWN_LIVENESS_TTL_MS
+  return !isAlive(record.pid)
+}
+
+/** How long ago a file was last written, or 0 when it cannot be read. */
+function fileAgeMs(path: string, now: number): number {
+  try {
+    return now - statSync(path).mtimeMs
+  } catch {
+    return 0
+  }
+}
+
 /** True when the file exists and was last written longer ago than `ageMs`. */
 function fileOlderThan(path: string, ageMs: number, now: number): boolean {
-  try {
-    return now - statSync(path).mtimeMs > ageMs
-  } catch {
-    return false
-  }
+  return fileAgeMs(path, now) > ageMs
 }
 
 export interface SessionWatcherEvents {
@@ -151,9 +197,9 @@ export class SessionWatcher extends EventEmitter {
         }
         continue
       }
-      // A stale heartbeat is only a hint; the pid is the truth. This is what
-      // reaps a wrapper that was killed rather than exiting cleanly.
-      if (isSessionStale(record, now) && !processAlive(record.pid)) {
+      // A stale heartbeat is only a hint; the pid is the truth, when there is
+      // one to ask. See `sessionShouldBeReaped`.
+      if (sessionShouldBeReaped(record, now, fileAgeMs(join(sessionsDir(), name), now))) {
         rmSync(join(sessionsDir(), name), { force: true })
         rmSync(join(promptsDir(), `${record.id}.json`), { force: true })
         rmSync(join(decisionsDir(), `${record.id}.json`), { force: true })
