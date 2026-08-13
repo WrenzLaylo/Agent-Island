@@ -386,13 +386,21 @@ export function IslandShell(props: IslandShellProps) {
                   <small>{terminalInput.terminalLabel ?? 'Terminal'}</small>
                 </span>
               </div>
-              {/* Dismiss, not merely collapse. Collapsing left the prompt in
-                  state, so the pill kept announcing "needs input" and reopened
-                  this same panel — which has no settings button, stranding the
-                  user. */}
-              <button type="button" className="icon-button" data-no-drag="true" onClick={onDismissHandoff} aria-label="Dismiss">
-                <CloseIcon />
-              </button>
+              {/* Settings reachable from here too. Every card is a place the
+                  user can land and be stuck otherwise: this panel reopens
+                  itself while the prompt is live, so without a way through to
+                  settings the only exit was answering the prompt. */}
+              <div className="panel-actions">
+                <button type="button" className="icon-button" data-no-drag="true" onClick={onOpenSettings} aria-label="Open settings">
+                  <GearIcon />
+                </button>
+                {/* Dismiss, not merely collapse. Collapsing left the prompt in
+                    state, so the pill kept announcing "needs input" and
+                    reopened this same panel. */}
+                <button type="button" className="icon-button" data-no-drag="true" onClick={onDismissHandoff} aria-label="Dismiss">
+                  <CloseIcon />
+                </button>
+              </div>
             </div>
             <div className="handoff-body">
               {/* The title moved to the header, so falling back to it here
@@ -480,6 +488,9 @@ export function IslandShell(props: IslandShellProps) {
                     1<span className="queue-of">of</span>{queueCount}
                   </span>
                 ) : null}
+                <button type="button" className="icon-button" data-no-drag="true" onClick={onOpenSettings} aria-label="Open settings">
+                  <GearIcon />
+                </button>
                 <button type="button" className="icon-button" data-no-drag="true" onClick={onCollapse} aria-label="Collapse approval">
                   <CloseIcon />
                 </button>
