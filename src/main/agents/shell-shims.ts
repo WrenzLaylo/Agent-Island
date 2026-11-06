@@ -138,11 +138,14 @@ export function ensureLauncherScripts(): string {
     join(dir, 'island'),
     [
       '#!/bin/bash',
-      `wrapper="${toPosix(wrapper)}"`,
+      // Native programs receive argv without MSYS path conversion in Hermes'
+      // Windows environment. `/c/Users/...` then reaches Node as
+      // `C:\\c\\Users\\...`; drive-slash form works in Bash and Node.
+      `wrapper="${toNativeNodePath(wrapper)}"`,
       'if command -v node >/dev/null 2>&1; then',
       '  exec node "$wrapper" "$@"',
       'fi',
-      `ELECTRON_RUN_AS_NODE=1 exec "${toPosix(exe)}" "$wrapper" "$@"`,
+      `ELECTRON_RUN_AS_NODE=1 exec "${toNativeNodePath(exe)}" "$wrapper" "$@"`,
       ''
     ].join('\n'),
     'utf8'
@@ -224,8 +227,8 @@ function powerShellBlock(): string {
 
 /** Bash functions for Git Bash / MSYS. */
 function bashBlock(): string {
-  const exe = toPosix(electronPath())
-  const wrapper = toPosix(wrapperPath())
+  const exe = toNativeNodePath(electronPath())
+  const wrapper = toNativeNodePath(wrapperPath())
   const bin = toPosix(launcherDir())
   const lines = [
     BEGIN,
@@ -253,6 +256,11 @@ function toPosix(winPath: string): string {
   const m = /^([A-Za-z]):\\(.*)$/.exec(winPath)
   if (!m) return winPath.replace(/\\/g, '/')
   return `/${m[1].toLowerCase()}/${m[2].replace(/\\/g, '/')}`
+}
+
+/** A Windows-native path safe to pass from Git Bash to Node/Electron. */
+export function toNativeNodePath(winPath: string): string {
+  return winPath.replace(/\\/g, '/')
 }
 
 function powerShellProfilePath(): string {

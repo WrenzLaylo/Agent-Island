@@ -16,7 +16,7 @@
  * agent. Exit code and stdio are transparent: if the wrapper fails for any
  * reason it must still leave the user with a working agent.
  */
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { spawn as ptySpawn, type IPty } from 'node-pty'
 import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -143,6 +143,13 @@ function delay(ms: number): Promise<void> {
 
 function isAgentId(value: string | undefined): value is AgentId {
   return value === 'claude' || value === 'codex' || value === 'hermes'
+}
+
+/** Native passthrough is safe only when structured approvals are installed. */
+function hasHermesStructuredBridge(): boolean {
+  const local = process.env.LOCALAPPDATA
+  if (!local) return false
+  return existsSync(join(local, 'hermes', 'plugins', 'agent-island-bridge', 'plugin.yaml'))
 }
 
 function usage(): never {
@@ -417,6 +424,93 @@ async function main(): Promise<void> {
     busy: false
   }
   files.writeSession(record)
+
+  /*
+   * Hermes owns a dynamic prompt-toolkit screen. Putting another ConPTY
+   * between Hermes and the real Windows terminal turns its in-place repaint
+   * stream into terminal-sized screen deltas; the host then renders those as
+   * a scrolling wall of `deliberating...` lines and blank rows.
+   *
+   * Hermes does not need terminal scraping for approvals: the bundled Hermes
+   * plugin provides the structured file bridge and falls back to Hermes'
+   * native prompt when the island is not running. Keep the wrapper as the
+   * session registrar/heartbeat/focus owner, but let Hermes inherit the real
+   * console directly so its renderer sees exactly the terminal the user sees.
+   */
+  if (process.platform === 'win32' && agentId === 'hermes' && hasHermesStructuredBridge()) {
+    const heartbeat = setInterval(() => {
+      files.writeSession({ ...record, heartbeatAt: Date.now() })
+    }, SESSION_HEARTBEAT_MS)
+    heartbeat.unref?.()
+
+    const focusRequestPath = join(focusDir(), `${id}.json`)
+    let focusMarkerActive = false
+    const focusPoll = setInterval(() => {
+      try {
+        if (!existsSync(focusRequestPath)) {
+          if (focusMarkerActive) {
+            focusMarkerActive = false
+            setTerminalTitle(agentId)
+          }
+          return
+        }
+        const request = parseFocusRequest(readFileSync(focusRequestPath, 'utf8'))
+        if (!request || request.sessionId !== id) return
+        focusMarkerActive = true
+        setTerminalTitle(request.marker)
+      } catch {
+        // Advisory focus integration must never stop the agent.
+      }
+    }, 150)
+    focusPoll.unref?.()
+
+    /*
+     * Hermes shares this console, so Ctrl+C and Ctrl+Break reach both
+     * processes and Hermes decides what they mean. If the wrapper exited here,
+     * the shell would take the prompt back while Hermes still owned the
+     * console, and the session file would outlive the session.
+     */
+    const leaveToHermes = (): void => {}
+    process.on('SIGINT', leaveToHermes)
+    process.on('SIGBREAK', leaveToHermes)
+    // Closing the terminal ends Hermes as well, so there is nothing to wait for.
+    process.on('SIGHUP', () => process.exit(129))
+    process.on('exit', () => {
+      clearInterval(heartbeat)
+      clearInterval(focusPoll)
+      safeRemove(focusRequestPath)
+      files.cleanup()
+    })
+
+    let child
+    try {
+      child = spawn(launch.command, launch.args, {
+        stdio: 'inherit',
+        cwd: launch.cwd,
+        env: {
+          ...process.env,
+          ...adapterEnv(agentId),
+          TERM: process.env.TERM || 'xterm-256color',
+          COLORTERM: process.env.COLORTERM || 'truecolor',
+          AGENT_ISLAND: '1',
+          AGENT_ISLAND_SESSION: id
+        },
+        windowsVerbatimArguments: launch.verbatim === true
+      })
+    } catch (error) {
+      process.stderr.write(`Could not start ${agentId}: ${String(error)}\n`)
+      process.exit(1)
+    }
+
+    const exitCode = await new Promise<number>((resolve) => {
+      child.once('error', (error) => {
+        process.stderr.write(`Could not start ${agentId}: ${String(error)}\n`)
+        resolve(1)
+      })
+      child.once('exit', (code) => resolve(code ?? 0))
+    })
+    process.exit(exitCode)
+  }
 
   // Edge-triggered: the session file is rewritten only when the agent starts
   // or stops producing output, not on every chunk.

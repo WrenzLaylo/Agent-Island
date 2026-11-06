@@ -75,6 +75,28 @@ describe('wrapper end to end', () => {
     expect(sessions[0].pid).toBeGreaterThan(0)
   })
 
+  it('does not turn Hermes redraws into a terminal-sized block of lines', async () => {
+    run = new WrapperRun('hermes')
+    run.start(
+      [
+        {
+          type: 'emit',
+          text: 'deliberating 1.0s\rdeliberating 1.1s\rdeliberating 1.2s',
+          raw: true
+        }
+      ],
+      { tailMs: 700, hermesStructuredBridge: true }
+    )
+
+    await run.waitForExit(40_000)
+    const output = run.output().stdout
+    expect(output).toContain('deliberating 1.2s')
+    // A nested Windows ConPTY emits a full terminal screen on teardown. In a
+    // real Hermes session those screen deltas become one visible line per
+    // spinner frame, which is the scrolling "deliberating..." corruption.
+    expect((output.match(/\r\n/g) ?? []).length).toBeLessThanOrEqual(2)
+  })
+
   it('turns a real Hermes panel into a prompt with verbatim options', async () => {
     run = new WrapperRun('hermes')
     run.start([
