@@ -120,7 +120,7 @@ export function withHookInstalled(
   // Ours are dropped first and re-added, so installing twice is idempotent and
   // a command path can change between versions without stacking duplicates.
   /*
-   * Short timeout. This hook only writes one small file and returns `ask`;
+   * Short timeout. This hook only writes one small file and exits silently;
    * nothing about a tool call should ever wait on Agent Island. The 130s it
    * used to allow was for the version that blocked until the user answered,
    * which is exactly the behaviour being removed.

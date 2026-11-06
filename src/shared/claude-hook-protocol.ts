@@ -7,10 +7,9 @@
  *
  * The whole design is shaped by one hazard: this code runs *inside the user's
  * agent*, synchronously, before their work can continue. Anything that hangs
- * here hangs Claude Code itself. So every path out of the hook returns `ask`
- * unless the user has genuinely answered — `ask` hands control back to Claude's
- * own permission UI, which is exactly the behaviour someone gets today without
- * Agent Island installed.
+ * here hangs Claude Code itself. So every path out of the hook exits silently,
+ * which leaves the decision with Claude's own permission policy: exactly the
+ * behaviour someone gets today without Agent Island installed.
  */
 
 export type HookPermission = 'allow' | 'deny' | 'ask'
@@ -184,8 +183,8 @@ export function hookResponse(permission: HookPermission, reason: string): string
  * Whether the island is close enough to answer.
  *
  * Read from the bridge heartbeat, so a stopped or crashed island costs the user
- * nothing: the hook returns `ask` immediately and Claude prompts as usual,
- * rather than waiting out a timeout on every single tool call.
+ * nothing: the hook exits immediately and Claude behaves as usual, rather
+ * than waiting out a timeout on every single tool call.
  */
 export const ISLAND_HEARTBEAT_STALE_MS = 15_000
 
