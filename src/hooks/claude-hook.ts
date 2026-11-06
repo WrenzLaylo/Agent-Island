@@ -25,7 +25,8 @@ import {
   toolNeedsApproval
 } from '../shared/claude-hook-protocol'
 import { readStdin } from './bridge-client'
-import { touchSession, wrapperOwnsThisSession } from './mirror-store'
+import { activityKey, touchSession, wrapperOwnsThisSession, writeActivity } from './mirror-store'
+import { describeActivity } from '../shared/activity'
 import { writePendingCall } from '../node/pending-calls'
 
 function done(): never {
@@ -38,12 +39,19 @@ function main(): void {
   // Read first, even to stand down. Claude Code is writing this payload, and
   // exiting before it finishes hands that write a broken pipe.
   const raw = readStdin()
+  const input = parseHookInput(raw)
+
+  // Before standing down: a wrapper can't see which tool is running, and every
+  // tool counts here, read-only ones included.
+  if (input?.sessionId) {
+    writeActivity(activityKey(input.sessionId), describeActivity(input.toolName, input.toolInput))
+  }
+
   // A wrapper-hosted session is the wrapper's to report. See
   // `wrapperOwnsThisSession` — recording here produced a second, unanswerable
   // card that covered the real one.
   if (wrapperOwnsThisSession()) done()
 
-  const input = parseHookInput(raw)
   if (!input) done()
 
   // Reads and searches are skipped here rather than by a matcher, so a tool

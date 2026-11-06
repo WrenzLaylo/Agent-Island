@@ -31,7 +31,7 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { readStdin } from './bridge-client'
-import { agentPid, wrapperOwnsThisSession } from './mirror-store'
+import { agentPid, clearActivity, wrapperOwnsThisSession } from './mirror-store'
 import { clearSessionCalls } from '../node/pending-calls'
 import { isSafeFileId } from '../shared/session-registry'
 
@@ -75,6 +75,7 @@ function main(): void {
   const file = join(dir, `claude-hook-${sessionId}.json`)
 
   if (payload.hook_event_name === 'SessionEnd') {
+    clearActivity(`claude-hook-${sessionId}`)
     try {
       rmSync(file, { force: true })
       // Anything still open belonged to a session that no longer exists. The

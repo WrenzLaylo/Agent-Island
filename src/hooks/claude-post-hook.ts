@@ -16,7 +16,7 @@
  */
 import { parseHookInput } from '../shared/claude-hook-protocol'
 import { readStdin } from './bridge-client'
-import { touchSession, wrapperOwnsThisSession } from './mirror-store'
+import { activityKey, clearActivity, touchSession, wrapperOwnsThisSession } from './mirror-store'
 import { clearPendingCall, clearPermission, clearSessionCalls } from '../node/pending-calls'
 
 function done(): never {
@@ -27,11 +27,15 @@ function main(): void {
   // Read first, even to stand down. Claude Code is writing this payload, and
   // exiting before it finishes hands that write a broken pipe.
   const raw = readStdin()
+  const input = parseHookInput(raw)
+
+  // The turn is over, so the pill stops describing its last tool.
+  if (input?.sessionId && input.event === 'Stop') clearActivity(activityKey(input.sessionId))
+
   // Nothing was opened for a wrapper-hosted session, so there is nothing here
   // to close. See `wrapperOwnsThisSession`.
   if (wrapperOwnsThisSession()) done()
 
-  const input = parseHookInput(raw)
   if (!input || !input.sessionId) done()
 
   // Proof of life, exactly as on the way in: a session whose tools are

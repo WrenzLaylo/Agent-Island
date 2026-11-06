@@ -94,6 +94,22 @@ describe('Claude mirror hook processes', () => {
     expect(result.stdout).toBe('')
   })
 
+  it('publishes activity for a wrapped session under the wrapper id, and clears it on Stop', () => {
+    const wrapped = { AGENT_ISLAND_SESSION: 'wrapper-session' }
+    const file = join(localAppData, 'agent-island', 'activity', 'wrapper-session.json')
+    expect(runHook(preHook, payload('PreToolUse'), wrapped).status).toBe(0)
+    expect(JSON.parse(readFileSync(file, 'utf8')).label).toBe('Running git status')
+    expect(runHook(postHook, payload('Stop'), wrapped).status).toBe(0)
+    expect(existsSync(file)).toBe(false)
+  })
+
+  it('publishes activity for a hook session, read-only tools included', () => {
+    const read = payload('PreToolUse', { tool_name: 'Read', tool_input: { file_path: 'C:/repo/README.md' } })
+    expect(runHook(preHook, read).status).toBe(0)
+    const file = join(localAppData, 'agent-island', 'activity', 'claude-hook-vscode-session.json')
+    expect(JSON.parse(readFileSync(file, 'utf8')).label).toBe('Reading README.md')
+  })
+
   it('refuses a session id that would escape the sessions folder', () => {
     const result = runHook(sessionHook, payload('SessionStart', { session_id: 'x/../../escaped' }))
     expect(result.status).toBe(0)

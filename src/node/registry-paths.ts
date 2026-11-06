@@ -29,6 +29,10 @@ export function focusDir(root = registryRoot()): string {
   return join(root, 'focus')
 }
 
+export function activityDir(root = registryRoot()): string {
+  return join(root, 'activity')
+}
+
 export function ensureRegistryDirs(root = registryRoot()): void {
   mkdirSync(sessionsDir(root), { recursive: true })
   mkdirSync(promptsDir(root), { recursive: true })

@@ -24,6 +24,16 @@ export function folderName(cwd: string | undefined): string {
   return cut >= 0 ? trimmed.slice(cut + 1) : trimmed
 }
 
+/** The most recent thing this agent is doing, across all of its sessions. */
+export function latestActivity(sessions: AgentSessionRecord[], agentId: AgentId): string {
+  let newest: { label: string; at: number } | undefined
+  for (const session of sessions) {
+    if (session.agentId !== agentId || !session.activity) continue
+    if (!newest || session.activity.at > newest.at) newest = session.activity
+  }
+  return newest?.label ?? ''
+}
+
 export interface SessionRow {
   id: string
   agentId: AgentId
@@ -37,6 +47,8 @@ export interface SessionRow {
    * stays quiet until ambiguity earns the noise.
    */
   qualifier: string
+  /** What the session is doing right now, when its hooks report it. */
+  activity: string
   busy: boolean
   pendingApprovals: number
   /**
@@ -91,6 +103,7 @@ export function buildSessionRows(
       folder,
       terminalLabel: session.terminalLabel,
       qualifier,
+      activity: session.activity?.label ?? '',
       busy: session.busy,
       pendingApprovals: pendingBySession.get(session.id) ?? 0,
       raisable: session.hwnd != null

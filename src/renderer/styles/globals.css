@@ -517,6 +517,15 @@ select:focus-visible,
   white-space: nowrap;
 }
 
+.activity-line {
+  display: block;
+  overflow: hidden;
+}
+
+.activity-line small {
+  display: block;
+}
+
 .compact-copy strong {
   font-size: var(--fs-md);
   font-weight: 600;

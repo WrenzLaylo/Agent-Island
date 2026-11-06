@@ -27,6 +27,8 @@ export type IslandPanel = 'settings' | 'onboarding' | 'handoff' | null
 interface IslandShellProps {
   state: IslandSnapshot
   active: AgentSnapshot
+  /** What the agent is doing, when its hooks report it. */
+  liveActivity: string
   approval?: ApprovalRequest
   terminalInput?: TerminalInputPrompt
   queueCount: number
@@ -236,6 +238,26 @@ function TransientGlyph({ kind, reduced }: { kind: string | undefined; reduced: 
   )
 }
 
+/** Rolls to the next line, so a change of task reads as a change. */
+function ActivityLine({ text, reduced }: { text: string; reduced: boolean }) {
+  if (reduced) return <small>{text}</small>
+  return (
+    <span className="activity-line">
+      <AnimatePresence initial={false} mode="popLayout">
+        <motion.small
+          key={text}
+          initial={{ y: 12, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          exit={{ y: -12, opacity: 0 }}
+          transition={{ duration: 0.22, ease: [0.2, 0, 0, 1] }}
+        >
+          {text}
+        </motion.small>
+      </AnimatePresence>
+    </span>
+  )
+}
+
 function contentFade(enter: number, exit: number) {
   return {
     initial: { opacity: 0 },
@@ -249,6 +271,7 @@ export function IslandShell(props: IslandShellProps) {
   const {
     state,
     active,
+    liveActivity,
     approval,
     terminalInput,
     queueCount,
@@ -384,7 +407,10 @@ export function IslandShell(props: IslandShellProps) {
                         : 'Approval required'
                       : active.label}
                   </motion.strong>
-                  <small>{hasApproval ? approvalAgent.label : active.activityLabel || 'Ready'}</small>
+                  <ActivityLine
+                    text={hasApproval ? approvalAgent.label : liveActivity || active.activityLabel || 'Ready'}
+                    reduced={reduced}
+                  />
                 </span>
                 <span className="compact-trailing" data-drag-region="true">
                   {hasApproval ? (

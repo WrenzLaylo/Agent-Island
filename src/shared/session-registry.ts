@@ -50,6 +50,12 @@ export interface AgentSessionRecord {
    */
   busy: boolean
   /**
+   * What the agent is doing, from its hooks. Never stored in the session file:
+   * the wrapper owns that file and rewrites it, so the main process merges this
+   * in when the list is read.
+   */
+  activity?: SessionActivity
+  /**
    * The prompt the user answered in the terminal rather than in the island.
    *
    * Clearing a prompt looks the same however it ended, so without this the
@@ -141,6 +147,30 @@ export interface SessionDecisionRecord {
    */
   text?: string
   decidedAt: number
+}
+
+/**
+ * A label stays up through a long command and the thinking after it, so this is
+ * only a backstop for a session that died without saying so.
+ */
+export const ACTIVITY_TTL_MS = 10 * 60_000
+
+export interface SessionActivity {
+  label: string
+  at: number
+}
+
+/** The file came from a hook, so nothing about it is taken on trust. */
+export function parseActivityRecord(raw: string, now: number): SessionActivity | null {
+  try {
+    const value = JSON.parse(raw) as Partial<SessionActivity> | null
+    if (!value || typeof value.label !== 'string' || typeof value.at !== 'number') return null
+    if (!Number.isFinite(value.at) || now - value.at > ACTIVITY_TTL_MS) return null
+    const label = value.label.trim().slice(0, 60)
+    return label ? { label, at: value.at } : null
+  } catch {
+    return null
+  }
 }
 
 /** A wrapper that has not checked in for this long is treated as dead. */
