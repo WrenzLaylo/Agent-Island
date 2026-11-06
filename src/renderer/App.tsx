@@ -278,8 +278,9 @@ export function App() {
   const [isDragging, setIsDragging] = useState(false)
   const [isMorphing, setIsMorphing] = useState(false)
   const [panel, setPanel] = useState<IslandPanel>(null)
-  const [terminalInput, setTerminalInput] = useState<TerminalInputPrompt | null>(null)
+  const [terminalInputs, setTerminalInputs] = useState<TerminalInputPrompt[]>([])
   const [windowFocused, setWindowFocused] = useState(false)
+  const [systemReducedMotion, setSystemReducedMotion] = useState(false)
 
   const stateRef = useRef(state)
   const settingsRef = useRef(settings)
@@ -305,12 +306,57 @@ export function App() {
     settingsRef.current = settings
   }, [settings])
 
+  useEffect(() => {
+    const query = window.matchMedia('(prefers-reduced-motion: reduce)')
+    const sync = () => {
+      setSystemReducedMotion(query.matches)
+      void window.agentIsland.setSystemReducedMotion(query.matches)
+    }
+    sync()
+    query.addEventListener('change', sync)
+    return () => query.removeEventListener('change', sync)
+  }, [])
+
+  useEffect(() => {
+    if (!panel) return
+    const frame = window.requestAnimationFrame(() => {
+      document.querySelector<HTMLElement>('[role="dialog"] button, [role="dialog"] input, [role="dialog"] select')?.focus()
+    })
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || panel === 'onboarding') return
+      event.preventDefault()
+      setPanel(null)
+      dispatch({ type: 'COLLAPSE' })
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      window.cancelAnimationFrame(frame)
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [panel])
+
   const dispatch = (event: IslandEvent) => {
     setState((previous) => reduceIsland(previous, event))
   }
 
+  const enqueueTerminalInput = (prompt: TerminalInputPrompt) => {
+    setTerminalInputs((current) =>
+      current.some((item) => item.id === prompt.id)
+        ? current.map((item) => (item.id === prompt.id ? prompt : item))
+        : [...current, prompt]
+    )
+  }
+
   const approval = currentApproval(state)
+  const terminalInput = terminalInputs[0] ?? null
   const queueCount = pendingApprovalCount(state)
+
+  // The handoff panel shows the head of the queue, so the queue decides when it
+  // closes. Closing it at each clear site hid prompts that were still waiting.
+  useEffect(() => {
+    if (!terminalInput) setPanel((current) => (current === 'handoff' ? null : current))
+  }, [terminalInput])
+
   const sessionRows = useMemo(
     () => buildSessionRows(sessions, Object.values(state.approvals)),
     [sessions, state.approvals]
@@ -531,7 +577,7 @@ export function App() {
 
     const offTerminalInput = api.onTerminalInput((request: TerminalInputPrompt) => {
       if (!request?.id || !request.agentId) return
-      setTerminalInput(request)
+      enqueueTerminalInput(request)
       setAttentionNonce((value) => value + 1)
       setPanel('handoff')
       dispatch({ type: 'SELECT_AGENT', agentId: request.agentId, open: false })
@@ -547,11 +593,7 @@ export function App() {
     })
 
     const offTerminalInputCleared = api.onTerminalInputCleared((request: TerminalInputPrompt) => {
-      setTerminalInput((current) => {
-        if (!current || current.id !== request.id) return current
-        return null
-      })
-      setPanel((current) => current === 'handoff' ? null : current)
+      setTerminalInputs((current) => current.filter((item) => item.id !== request.id))
       const agent = stateRef.current.agents[request.agentId]
       if (agent?.available && agent.pendingApprovalIds.length === 0) {
         dispatch({
@@ -612,8 +654,7 @@ export function App() {
       // island insisting that agent still needed input, and because the
       // handoff panel has no settings button, that stuck panel also cut off
       // the only route to settings.
-      setTerminalInput((current) => (current?.sessionId === session.id ? null : current))
-      setPanel((current) => (current === 'handoff' ? null : current))
+      setTerminalInputs((current) => current.filter((item) => item.sessionId !== session.id))
       // Queued approvals from a dead session can never be answered either.
       for (const requestId of stateRef.current.approvalQueue) {
         if (stateRef.current.approvals[requestId]?.sessionId !== session.id) continue
@@ -637,7 +678,7 @@ export function App() {
         enqueueApproval(sessionPromptToApproval(prompt, session), true, !terminalFocused)
         return
       }
-      setTerminalInput(sessionPromptToHandoff(prompt, session))
+      enqueueTerminalInput(sessionPromptToHandoff(prompt, session))
       setAttentionNonce((value) => value + 1)
       if (!terminalFocused) setPanel('handoff')
       dispatch({ type: 'SELECT_AGENT', agentId: prompt.agentId, open: false })
@@ -673,8 +714,7 @@ export function App() {
         })
         return
       }
-      setTerminalInput((current) => (current?.id === prompt.promptId ? null : current))
-      setPanel((current) => (current === 'handoff' ? null : current))
+      setTerminalInputs((current) => current.filter((item) => item.id !== prompt.promptId))
       refreshSessions()
     })
 
@@ -690,7 +730,7 @@ export function App() {
         if (prompt.kind === 'approval' || prompt.kind === 'choice') {
           enqueueApproval(sessionPromptToApproval(prompt, session), false)
         } else {
-          setTerminalInput(sessionPromptToHandoff(prompt, session))
+          enqueueTerminalInput(sessionPromptToHandoff(prompt, session))
           setPanel('handoff')
           dispatch({ type: 'EXPAND' })
         }
@@ -958,12 +998,13 @@ export function App() {
    */
   useEffect(() => {
     const timer = window.setInterval(() => {
-      setTerminalInput((current) => {
-        if (!current) return current
-        if (Date.now() > current.expiresAt) return null
-        if (current.sessionId && !sessionsRef.current.some((s) => s.id === current.sessionId)) return null
-        return current
-      })
+      setTerminalInputs((current) =>
+        current.filter(
+          (item) =>
+            Date.now() <= item.expiresAt &&
+            (!item.sessionId || sessionsRef.current.some((session) => session.id === item.sessionId))
+        )
+      )
     }, 1000)
     return () => window.clearInterval(timer)
   }, [])
@@ -1103,10 +1144,15 @@ export function App() {
     updateAppSettings({ onboardingComplete: true })
     setPanel(null)
     dispatch({ type: 'COLLAPSE' })
-    // Shell integration is on by default for new installs: without it the
-    // island cannot see a session at all. The shims fail open, and Settings has
-    // a one-click Remove.
-    void window.agentIsland.installShims()
+  }
+
+  const installIntegrationAndComplete = async () => {
+    const result = await window.agentIsland.installShims()
+    if (!result.ok) {
+      dispatch({ type: 'SET_ERROR', message: result.errors?.join(' ') || 'Could not install shell integration.' })
+      return
+    }
+    completeOnboarding()
   }
 
   const onMouseEnter = () => {
@@ -1254,7 +1300,7 @@ export function App() {
     // The prompt is still live in the terminal — the user is going there to
     // answer it. Clearing it here just stops the island nagging about it.
     if (terminalInput?.agentId === agentId && (!sessionId || terminalInput.sessionId === sessionId)) {
-      setTerminalInput(null)
+      setTerminalInputs((current) => current.filter((item) => item.id !== terminalInput.id))
     }
     setPanel(null)
     dispatch({ type: 'COLLAPSE' })
@@ -1271,7 +1317,7 @@ export function App() {
     <div
       className={`stage ${isDragging ? 'is-dragging' : ''}`}
       style={{ ['--surface-radius' as string]: `${surfaceRadius}px` }}
-      data-reduced-motion={settings.reducedMotion ? 'true' : 'false'}
+      data-reduced-motion={settings.reducedMotion || systemReducedMotion ? 'true' : 'false'}
       data-platform={window.agentIsland?.platform ?? 'unknown'}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
@@ -1289,7 +1335,7 @@ export function App() {
           docked={docked}
           attentionNonce={attentionNonce}
           panel={panel}
-          settings={settings}
+          settings={systemReducedMotion && !settings.reducedMotion ? { ...settings, reducedMotion: true } : settings}
           isMorphing={isMorphing}
           quietIdle={quietIdle}
           onSelectAgent={selectAgent}
@@ -1313,7 +1359,9 @@ export function App() {
             if (requestId) dispatch({ type: 'SHOW_APPROVAL', requestId })
           }}
           onDismissHandoff={() => {
-            setTerminalInput(null)
+            const remaining = terminalInputs.filter((item) => item.id !== terminalInput?.id)
+            setTerminalInputs(remaining)
+            if (remaining.length > 0) return
             setPanel(null)
             dispatch({ type: 'COLLAPSE' })
           }}
@@ -1322,6 +1370,7 @@ export function App() {
           onClosePanel={() => setPanel(null)}
           onSettingsChange={updateAppSettings}
           onCompleteOnboarding={completeOnboarding}
+          onInstallIntegration={() => void installIntegrationAndComplete()}
           onReturnHome={() => void returnHome()}
         />
       </div>

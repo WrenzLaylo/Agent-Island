@@ -29,10 +29,9 @@ export function SessionList({ rows, onOpenSession, onShowApproval }: SessionList
         // rows would otherwise read identically.
         const secondary = row.qualifier ? `${row.terminalLabel} · ${row.qualifier}` : row.terminalLabel
         return (
+          <div key={row.id} role="listitem" className="session-row-item">
           <button
-            key={row.id}
             type="button"
-            role="listitem"
             data-no-drag="true"
             className={`session-row ${row.pendingApprovals > 0 ? 'is-waiting' : ''}`}
             // The visible row is short by design, so the full identity of the
@@ -70,6 +69,7 @@ export function SessionList({ rows, onOpenSession, onShowApproval }: SessionList
               <StatusDot status={row.busy ? 'running' : 'idle'} />
             )}
           </button>
+          </div>
         )
       })}
     </div>
