@@ -60,10 +60,10 @@ export function SettingsPanel({ settings, onChange, onClose, onReturnHome }: Set
   }
 
   return (
-    <div className="settings-view">
+    <div className="settings-view" role="dialog" aria-modal="true" aria-labelledby="settings-title">
       <div className="panel-header" data-drag-region="true">
         <div>
-          <strong>Agent Island settings</strong>
+          <strong id="settings-title">Agent Island settings</strong>
           <small>Keep the island quiet, useful and out of the way.</small>
         </div>
         <button type="button" className="icon-button" data-no-drag="true" onClick={onClose} aria-label="Close settings">

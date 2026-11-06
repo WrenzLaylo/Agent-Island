@@ -306,6 +306,13 @@ select:focus-visible,
 .agent-mark-codex .agent-logo { color: #6fc79b; }
 .agent-mark-hermes .agent-logo { color: #a794f0; }
 
+/* Hermes' official favicon is a text glyph rather than a path. The platform
+   font keeps it legible at the island's 20–28px badge sizes. */
+.agent-mark-hermes .agent-logo svg text {
+  fill: currentColor;
+  font-family: "Segoe UI Symbol", "Noto Sans Symbols 2", sans-serif;
+}
+
 .agent-glyph {
   font-size: var(--fs-xs);
   font-weight: 600;
@@ -808,8 +815,15 @@ select:focus-visible,
   scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
 }
 
+.session-row-item {
+  display: flex;
+  height: var(--session-row-h);
+  flex: 0 0 var(--session-row-h);
+}
+
 .session-row {
   display: flex;
+  width: 100%;
   height: var(--session-row-h);
   flex: 0 0 var(--session-row-h);
   align-items: center;
@@ -1706,10 +1720,24 @@ select:focus-visible,
   font-size: var(--fs-sm);
 }
 
+.onboarding-disclosure {
+  margin: 0 0 var(--s-3);
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+  text-align: left;
+}
+
+.onboarding-actions {
+  display: grid;
+  width: 100%;
+  gap: var(--s-2);
+  margin-top: auto;
+}
+
 .onboarding-button {
   width: 100%;
   min-height: 34px;
-  margin-top: auto;
 }
 
 /* ── Settings ────────────────────────────────────────────────────────────── */

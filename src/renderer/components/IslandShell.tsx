@@ -57,6 +57,7 @@ interface IslandShellProps {
   onClosePanel: () => void
   onSettingsChange: (patch: Partial<IslandSettings>) => void
   onCompleteOnboarding: () => void
+  onInstallIntegration: () => void
   onReturnHome: () => void
 }
 
@@ -241,6 +242,7 @@ export function IslandShell(props: IslandShellProps) {
     onClosePanel,
     onSettingsChange,
     onCompleteOnboarding,
+    onInstallIntegration,
     onReturnHome
   } = props
 
@@ -362,7 +364,7 @@ export function IslandShell(props: IslandShellProps) {
           </motion.button>
         ) : panel === 'onboarding' ? (
           <motion.div key="onboarding" className="island-content" {...fade}>
-            <OnboardingCard onComplete={onCompleteOnboarding} />
+            <OnboardingCard onComplete={onCompleteOnboarding} onInstallIntegration={onInstallIntegration} />
           </motion.div>
         ) : panel === 'settings' ? (
           <motion.div key="settings" className="island-content" {...fade}>
@@ -374,6 +376,7 @@ export function IslandShell(props: IslandShellProps) {
             className="island-content handoff-view"
             {...fade}
             role="dialog"
+            aria-modal="true"
             aria-label={handoffHeadline(terminalInput.title, state.agents[terminalInput.agentId].label)}
           >
             <div className="panel-header handoff-header" data-drag-region="true">

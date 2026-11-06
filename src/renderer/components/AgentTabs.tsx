@@ -26,9 +26,23 @@ export function AgentTabs({ agents, activeAgentId, onSelect }: AgentTabsProps) {
             role="tab"
             data-no-drag="true"
             aria-selected={active}
+            tabIndex={active ? 0 : -1}
+            id={`agent-tab-${agent.id}`}
             aria-label={`Switch to ${agent.label}`}
             className={`agent-switch ${active ? 'is-active' : ''}`}
             onClick={() => onSelect(agent.id)}
+            onKeyDown={(event) => {
+              if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+              event.preventDefault()
+              const buttons = Array.from(
+                event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]') ?? []
+              )
+              const current = buttons.indexOf(event.currentTarget)
+              const delta = event.key === 'ArrowRight' ? 1 : -1
+              const next = buttons[(current + delta + buttons.length) % buttons.length]
+              next?.focus()
+              next?.click()
+            }}
           >
             <AgentMark agentId={agent.id} mini />
             <span className="agent-switch-label">{agent.label}</span>
