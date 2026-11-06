@@ -114,6 +114,17 @@ function removePendingRequest(
   return { approvals, approvalQueue, agents }
 }
 
+/**
+ * What the island shortcut does in each mode.
+ *
+ * An open approval stays up: the shortcut has already focused the window, and
+ * that focus is how the card gets answered from the keyboard.
+ */
+export function toggleEvent(mode: IslandMode): 'CLICK_PILL' | 'COLLAPSE' | null {
+  if (mode === 'collapsed') return 'CLICK_PILL'
+  return mode === 'approval' ? null : 'COLLAPSE'
+}
+
 export function reduceIsland(state: IslandSnapshot, event: IslandEvent): IslandSnapshot {
   switch (event.type) {
     case 'HOVER_ENTER':

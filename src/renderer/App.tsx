@@ -16,6 +16,7 @@ import {
   currentApproval,
   pendingApprovalCount,
   reduceIsland,
+  toggleEvent,
   type IslandEvent
 } from '@shared/island-machine'
 import { canApproveRequest } from '@shared/approval-guard'
@@ -539,11 +540,10 @@ export function App() {
 
     const offToggle = api.onToggle(() => {
       setPanel(null)
-      setState((previous) =>
-        reduceIsland(previous, {
-          type: previous.mode === 'collapsed' ? 'CLICK_PILL' : 'COLLAPSE'
-        })
-      )
+      setState((previous) => {
+        const type = toggleEvent(previous.mode)
+        return type ? reduceIsland(previous, { type }) : previous
+      })
     })
 
     const offSelectAgent = api.onSelectAgent((agentId: AgentId) => {
@@ -1318,6 +1318,7 @@ export function App() {
       className={`stage ${isDragging ? 'is-dragging' : ''}`}
       style={{ ['--surface-radius' as string]: `${surfaceRadius}px` }}
       data-reduced-motion={settings.reducedMotion || systemReducedMotion ? 'true' : 'false'}
+      data-window-focused={windowFocused ? 'true' : 'false'}
       data-platform={window.agentIsland?.platform ?? 'unknown'}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}

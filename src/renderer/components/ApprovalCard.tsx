@@ -1,6 +1,7 @@
 import { motion } from 'framer-motion'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { APPROVAL_REARM_MS, approvalReArmed } from '@shared/approval-guard'
+import { isTypingTarget, rowForKey, rowKey } from '@shared/approval-keys'
 import { approvalRows, isDenyRow } from '@shared/approval-options'
 import {
   AGENT_LABELS,
@@ -170,6 +171,26 @@ export function ApprovalCard({ approval, approveEnabled, disabled = false, onDec
     else if (row.decision) onDecision(row.decision)
   }
 
+  // One answer per card from the keyboard, however fast the second key lands.
+  const keyedRef = useRef<string | null>(null)
+
+  // Reattached each render on purpose: it reads the same props the buttons do.
+  useEffect(() => {
+    if (pendingPermanent) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (isTypingTarget(event.target)) return
+      const row = rowForKey(rows, event)
+      if (!row || inert || (!isDenyRow(row) && !approveEnabled)) return
+      if (keyedRef.current === approval.id) return
+      event.preventDefault()
+      // An "always" row only opens its confirmation, so it answers nothing yet.
+      if (row.decision !== 'always') keyedRef.current = approval.id
+      choose(row)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  })
+
   return (
     <div className={`approval-card risk-${approval.risk}`}>
       {/* The panel header already states "Approval required" and names the
@@ -238,7 +259,7 @@ export function ApprovalCard({ approval, approveEnabled, disabled = false, onDec
         </motion.div>
       ) : (
         <div className={`decision-list choices-${rows.length}`}>
-          {rows.map((row) => {
+          {rows.map((row, position) => {
             // Unclassified rows are gated like approvals, never like denials.
             const isDeny = isDenyRow(row)
             const buttonDisabled = inert || (!isDeny && !approveEnabled)
@@ -250,6 +271,7 @@ export function ApprovalCard({ approval, approveEnabled, disabled = false, onDec
                 data-no-drag="true"
                 onClick={() => choose(row)}
                 disabled={buttonDisabled}
+                aria-keyshortcuts={String(rowKey(row, position))}
                 whileTap={!buttonDisabled ? { scale: 0.985 } : undefined}
               >
                 {/* The digit is shown because it is literally what gets sent to
@@ -263,6 +285,9 @@ export function ApprovalCard({ approval, approveEnabled, disabled = false, onDec
                   <strong>{row.label}</strong>
                   {row.hint ? <small>{row.hint}</small> : null}
                 </span>
+                {row.index == null ? (
+                  <kbd className="decision-key" aria-hidden="true">{rowKey(row, position)}</kbd>
+                ) : null}
               </motion.button>
             )
           })}
