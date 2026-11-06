@@ -37,7 +37,8 @@ function describeCommand(command: unknown): string {
   const start = words.findIndex((word) => !word.includes('='))
   if (start < 0) return 'Running a command'
   const program = folderName(words[start].replace(/^["']|["']$/g, '')).replace(/\.(exe|cmd|bat)$/i, '')
-  if (!program) return 'Running a command'
+  // `$s = ...`, `& "x.exe"` and `(Get-Item .)` are shell syntax, not programs.
+  if (!/^[A-Za-z0-9][A-Za-z0-9._+-]*$/.test(program)) return 'Running a command'
   const next = words[start + 1]
   const known = Object.hasOwn(SUBCOMMANDS, program) ? SUBCOMMANDS[program] : []
   return known.includes(next) ? `Running ${program} ${next}` : `Running ${program}`

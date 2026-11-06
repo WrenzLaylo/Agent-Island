@@ -29,6 +29,13 @@ describe('what the pill says an agent is doing', () => {
     expect(describeActivity('PowerShell', { command: 'npm run build' })).toBe('Running npm run')
   })
 
+  it('does not mistake shell syntax for a program', () => {
+    const shell = (command: string) => describeActivity('PowerShell', { command })
+    expect(shell('$s = "C:/temp/out"')).toBe('Running a command')
+    expect(shell('& "C:/tools/x.exe" --flag')).toBe('Running a command')
+    expect(shell('(Get-Item .).Name')).toBe('Running a command')
+  })
+
   it('names search, web and agent tools plainly', () => {
     expect(describeActivity('Grep', { pattern: 'token' })).toBe('Searching')
     expect(describeActivity('WebFetch', { url: 'https://example.com/?key=abc' })).toBe('Reading the web')
