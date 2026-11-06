@@ -1007,7 +1007,7 @@ function registerIpc(): void {
     }
   )
 
-  ipcMain.handle('island:list-sessions', () => sessionWatcher.listSessions())
+  ipcMain.handle('island:list-sessions', () => sessionWatcher.listSessionsWithActivity())
   ipcMain.handle('island:list-session-prompts', () => sessionWatcher.listPrompts())
   ipcMain.handle(
     'island:answer-session-prompt',

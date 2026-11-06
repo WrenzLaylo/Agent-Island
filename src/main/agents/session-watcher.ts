@@ -14,6 +14,7 @@ import { existsSync, readdirSync, readFileSync, renameSync, rmSync, statSync, wa
 import { join } from 'node:path'
 import {
   isSessionStale,
+  parseActivityRecord,
   parsePromptRecord,
   parseSessionRecord,
   isSafeFileId,
@@ -21,7 +22,7 @@ import {
   type SessionDecisionRecord,
   type SessionPromptRecord
 } from '../../shared/session-registry'
-import { decisionsDir, ensureRegistryDirs, promptsDir, sessionsDir } from '../../node/registry-paths'
+import { activityDir, decisionsDir, ensureRegistryDirs, promptsDir, sessionsDir } from '../../node/registry-paths'
 import { isRunningCommand, processAlive } from '../../node/win32-windows'
 import {
   PENDING_CALL_TTL_MS,
@@ -249,6 +250,20 @@ export class SessionWatcher extends EventEmitter {
 
   listSessions(): AgentSessionRecord[] {
     return [...this.sessions.values()]
+  }
+
+  /** For the renderer. Kept apart from `listSessions`, which runs on every poll. */
+  listSessionsWithActivity(now = Date.now()): AgentSessionRecord[] {
+    return this.listSessions().map((session) => {
+      if (!isSafeFileId(session.id)) return session
+      try {
+        const raw = readFileSync(join(activityDir(), `${session.id}.json`), 'utf8')
+        const activity = parseActivityRecord(raw, now)
+        return activity ? { ...session, activity } : session
+      } catch {
+        return session
+      }
+    })
   }
 
   listPrompts(): SessionPromptRecord[] {

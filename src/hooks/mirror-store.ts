@@ -7,7 +7,7 @@
  * `node/pending-calls`; this module answers only "which session, and is it still
  * there".
  */
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -88,6 +88,38 @@ export function wrapperSessionId(): string {
  */
 export function wrapperOwnsThisSession(): boolean {
   return wrapperSessionId() !== ''
+}
+
+/**
+ * The session record an agent's activity belongs to. A wrapped session already
+ * has one, under the wrapper's id; otherwise the hook published its own.
+ */
+export function activityKey(sessionId: string): string {
+  return wrapperSessionId() || `claude-hook-${sessionId}`
+}
+
+/** Advisory, like the rest of this file: it must never get in the agent's way. */
+export function writeActivity(key: string, label: string): void {
+  if (!isSafeFileId(key)) return
+  try {
+    const dir = join(registryRoot(), 'activity')
+    mkdirSync(dir, { recursive: true })
+    const target = join(dir, `${key}.json`)
+    const tmp = `${target}.tmp-${process.pid}-${randomUUID()}`
+    writeFileSync(tmp, JSON.stringify({ label, at: Date.now() }), 'utf8')
+    renameSync(tmp, target)
+  } catch {
+    // The pill falls back to its generic status.
+  }
+}
+
+export function clearActivity(key: string): void {
+  if (!isSafeFileId(key)) return
+  try {
+    rmSync(join(registryRoot(), 'activity', `${key}.json`), { force: true })
+  } catch {
+    // A stale label ages out on its own.
+  }
 }
 
 /**

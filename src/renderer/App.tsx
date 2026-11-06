@@ -21,7 +21,7 @@ import {
 } from '@shared/island-machine'
 import { canApproveRequest } from '@shared/approval-guard'
 import type { AgentSessionRecord, SessionPromptRecord } from '@shared/session-registry'
-import { buildSessionRows } from '@shared/session-list'
+import { buildSessionRows, latestActivity } from '@shared/session-list'
 import { radiusForSize } from '@shared/surface-radius'
 import { AUTO_TUCK_MS } from '@shared/tuck'
 import { IslandShell, type IslandPanel } from './components/IslandShell'
@@ -721,7 +721,7 @@ export function App() {
     refreshSessions()
     // Transient labels (a just-answered approval, a cleared prompt) otherwise
     // stick until a session is added or removed, which may never happen.
-    const statusTimer = window.setInterval(refreshSessions, 3000)
+    const statusTimer = window.setInterval(refreshSessions, 1500)
     void api.listSessionPrompts().then((list) => {
       if (disposed || !Array.isArray(list)) return
       for (const prompt of list) {
@@ -1327,6 +1327,7 @@ export function App() {
         <IslandShell
           state={state}
           active={active}
+          liveActivity={latestActivity(sessions, active.id)}
           approval={approval}
           terminalInput={terminalInput ?? undefined}
           queueCount={queueCount}

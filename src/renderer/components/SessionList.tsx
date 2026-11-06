@@ -61,7 +61,7 @@ export function SessionList({ rows, onOpenSession, onShowApproval }: SessionList
             <AgentMark agentId={row.agentId} mini />
             <span className="session-row-copy">
               <strong>{row.folder || row.agentLabel}</strong>
-              <small>{secondary}</small>
+              <small>{row.activity || secondary}</small>
             </span>
             {row.pendingApprovals > 0 ? (
               <span className="session-row-badge">{row.pendingApprovals}</span>

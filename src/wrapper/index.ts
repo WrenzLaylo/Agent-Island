@@ -58,7 +58,7 @@ import {
   type SessionPromptRecord,
   type TerminalKind
 } from '../shared/session-registry'
-import { decisionsDir, ensureRegistryDirs, focusDir, promptsDir, sessionsDir } from '../node/registry-paths'
+import { activityDir, decisionsDir, ensureRegistryDirs, focusDir, promptsDir, sessionsDir } from '../node/registry-paths'
 import { findAncestorWindow, findWindowsByTitle } from '../node/win32-windows'
 
 /** Control bytes, named rather than embedded raw in source. */
@@ -293,6 +293,7 @@ class SessionFiles {
   }
 
   cleanup(): void {
+    safeRemove(join(activityDir(), `${this.id}.json`))
     safeRemove(this.sessionPath)
     safeRemove(this.promptPath)
     safeRemove(this.decisionPath)
