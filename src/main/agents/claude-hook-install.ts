@@ -78,11 +78,25 @@ export function claudeSettingsPath(): string {
  * shell untouched.
  */
 export function toHookCommand(path: string): string {
-  return path.split(BACKSLASH).join('/')
+  const clean = path.split(BACKSLASH).join('/')
+  if (/^".*"$/.test(clean)) return clean
+  return /\s/.test(clean) ? `"${clean}"` : clean
 }
 
 export function isOurs(entry: HookEntry): boolean {
-  return entry?._source === HOOK_MARKER
+  if (entry?._source === HOOK_MARKER) return true
+  if (!entry || typeof entry.command !== 'string') return false
+
+  /*
+   * Claude Code rewrites settings.json and drops unknown fields, including our
+   * `_source` marker. Recognise only the stable launchers Agent Island itself
+   * creates, under its own bin directory, so a rewrite cannot turn our entries
+   * into untouchable duplicates while unrelated user hooks remain foreign.
+   */
+  const command = toHookCommand(entry.command).replace(/^['"]|['"]$/g, '').toLowerCase()
+  return /\/agent-island\/bin\/claude(?:-(?:post|notify|session|permission))?-hook\.cmd$/.test(
+    command
+  )
 }
 
 /**
@@ -106,6 +120,8 @@ export interface HookCommands {
   post: string
   /** Notification: raises the card beside the agent's own prompt. */
   notify: string
+  /** PermissionRequest / PermissionDenied: the ask itself, and its refusal. */
+  permission: string
   /** SessionStart / SessionEnd: publishes the session itself. */
   session: string
 }
@@ -120,7 +136,7 @@ export function withHookInstalled(
   // Ours are dropped first and re-added, so installing twice is idempotent and
   // a command path can change between versions without stacking duplicates.
   /*
-   * Short timeout. This hook only writes one small file and exits silently;
+   * Short timeout. This hook only writes one small file and returns `ask`;
    * nothing about a tool call should ever wait on Agent Island. The 130s it
    * used to allow was for the version that blocked until the user answered,
    * which is exactly the behaviour being removed.
@@ -140,15 +156,17 @@ export function withHookInstalled(
    * reason the others are: PreToolUse alone opens records that nothing ever
    * closes, so every card it raised would stay up until its ten-minute TTL.
    */
-  hooks.PostToolUse = [
-    ...withoutOurs(hooks.PostToolUse),
-    {
-      matcher: CLAUDE_HOOK_MATCHER,
-      hooks: [
-        { type: 'command', command: toHookCommand(commands.post), timeout: 10, _source: HOOK_MARKER }
-      ]
-    }
-  ]
+  for (const event of ['PostToolUse', 'PostToolUseFailure']) {
+    hooks[event] = [
+      ...withoutOurs(hooks[event]),
+      {
+        matcher: CLAUDE_HOOK_MATCHER,
+        hooks: [
+          { type: 'command', command: toHookCommand(commands.post), timeout: 10, _source: HOOK_MARKER }
+        ]
+      }
+    ]
+  }
 
   /*
    * The same script again, because PostToolUse does not fire for a call that
@@ -181,6 +199,34 @@ export function withHookInstalled(
       ]
     }
   ]
+
+  /*
+   * The event the rest of this was working around.
+   *
+   * `PermissionRequest` fires only when a permission is genuinely about to be
+   * asked, and it is dispatched from the permission engine — both from the
+   * interactive path and from the code that sends `can_use_tool` over the SDK
+   * control channel, which is what the VS Code extension uses. So it reaches
+   * the host where `Notification` never arrives, and it carries `tool_name` and
+   * `tool_input`, which `Notification` does not.
+   *
+   * Matched on tool name like the other tool events, so an empty matcher takes
+   * all of them.
+   *
+   * `PermissionDenied` runs the same script: a refusal ends the question
+   * without a `PostToolUse`, since nothing ran.
+   */
+  for (const event of ['PermissionRequest', 'PermissionDenied']) {
+    hooks[event] = [
+      ...withoutOurs(hooks[event]),
+      {
+        matcher: CLAUDE_HOOK_MATCHER,
+        hooks: [
+          { type: 'command', command: toHookCommand(commands.permission), timeout: 10, _source: HOOK_MARKER }
+        ]
+      }
+    ]
+  }
 
   /*
    * SessionStart and SessionEnd publish the session itself, so the island can
@@ -218,8 +264,11 @@ export function withHookRemoved(settings: ClaudeSettings): ClaudeSettings {
   for (const event of [
     'PreToolUse',
     'PostToolUse',
+    'PostToolUseFailure',
     'Stop',
     'Notification',
+    'PermissionRequest',
+    'PermissionDenied',
     'SessionStart',
     'SessionEnd'
   ]) {
@@ -236,9 +285,21 @@ export function withHookRemoved(settings: ClaudeSettings): ClaudeSettings {
 }
 
 export function hookIsInstalled(settings: ClaudeSettings): boolean {
-  const groups = settings?.hooks?.PreToolUse
-  if (!Array.isArray(groups)) return false
-  return groups.some((group) => (group.hooks ?? []).some(isOurs))
+  const required = [
+    'PreToolUse',
+    'PostToolUse',
+    'PostToolUseFailure',
+    'Stop',
+    'Notification',
+    'PermissionRequest',
+    'PermissionDenied',
+    'SessionStart',
+    'SessionEnd'
+  ]
+  return required.every((event) => {
+    const groups = settings?.hooks?.[event]
+    return Array.isArray(groups) && groups.some((group) => (group.hooks ?? []).some(isOurs))
+  })
 }
 
 export interface HookStatus {

@@ -16,15 +16,22 @@
  */
 import { parseHookInput } from '../shared/claude-hook-protocol'
 import { readStdin } from './bridge-client'
-import { touchSession } from './mirror-store'
-import { clearPendingCall, clearSessionCalls } from '../node/pending-calls'
+import { touchSession, wrapperOwnsThisSession } from './mirror-store'
+import { clearPendingCall, clearPermission, clearSessionCalls } from '../node/pending-calls'
 
 function done(): never {
   process.exit(0)
 }
 
 function main(): void {
-  const input = parseHookInput(readStdin())
+  // Read first, even to stand down. Claude Code is writing this payload, and
+  // exiting before it finishes hands that write a broken pipe.
+  const raw = readStdin()
+  // Nothing was opened for a wrapper-hosted session, so there is nothing here
+  // to close. See `wrapperOwnsThisSession`.
+  if (wrapperOwnsThisSession()) done()
+
+  const input = parseHookInput(raw)
   if (!input || !input.sessionId) done()
 
   // Proof of life, exactly as on the way in: a session whose tools are
@@ -48,6 +55,7 @@ function main(): void {
   }
 
   clearPendingCall(input.sessionId, input.toolUseId)
+  clearPermission(input.sessionId)
   done()
 }
 

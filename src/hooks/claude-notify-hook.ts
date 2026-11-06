@@ -20,7 +20,7 @@
  * That is why it marks rather than describes.
  */
 import { readStdin } from './bridge-client'
-import { touchSession } from './mirror-store'
+import { touchSession, wrapperOwnsThisSession } from './mirror-store'
 import { markPermissionAsked } from '../node/pending-calls'
 
 function done(why = ''): never {
@@ -31,6 +31,13 @@ function done(why = ''): never {
 }
 
 function main(): void {
+  // Read first, even to stand down. Claude Code is writing this payload, and
+  // exiting before it finishes hands that write a broken pipe.
+  const raw = readStdin()
+  // The wrapper's own scraper already saw this panel, and can answer it. See
+  // `wrapperOwnsThisSession`.
+  if (wrapperOwnsThisSession()) done('an island wrapper owns this session')
+
   let payload: {
     session_id?: string
     cwd?: string
@@ -38,7 +45,7 @@ function main(): void {
     message?: string
   }
   try {
-    payload = JSON.parse(readStdin().replace(/^﻿/, '')) as typeof payload
+    payload = JSON.parse(raw.replace(/^﻿/, '')) as typeof payload
   } catch {
     done('stdin was not JSON')
   }

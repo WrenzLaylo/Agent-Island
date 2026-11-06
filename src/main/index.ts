@@ -23,6 +23,7 @@ import { codexHookStatus, installCodexHook, uninstallCodexHook } from './agents/
 import {
   claudeHookLauncher,
   claudeNotifyHookLauncher,
+  claudePermissionHookLauncher,
   claudePostHookLauncher,
   claudeSessionHookLauncher,
   codexHookLauncher,
@@ -603,6 +604,7 @@ function rebuildTrayMenu(): void {
             : installClaudeHook({
                 record: claudeHookLauncher(),
                 notify: claudeNotifyHookLauncher(),
+                permission: claudePermissionHookLauncher(),
                 post: claudePostHookLauncher(),
                 session: claudeSessionHookLauncher()
               })
@@ -977,6 +979,7 @@ function registerIpc(): void {
   ipcMain.handle('island:install-claude-hook', () => installClaudeHook({
                 record: claudeHookLauncher(),
                 notify: claudeNotifyHookLauncher(),
+                permission: claudePermissionHookLauncher(),
                 post: claudePostHookLauncher(),
                 session: claudeSessionHookLauncher()
               }))

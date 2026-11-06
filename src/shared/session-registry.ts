@@ -112,7 +112,7 @@ export interface SessionFocusRequest {
 export function parseFocusRequest(raw: string): SessionFocusRequest | null {
   try {
     const value = JSON.parse(stripBom(raw)) as Partial<SessionFocusRequest>
-    if (typeof value.sessionId !== 'string' || !value.sessionId) return null
+    if (!isSafeFileId(value.sessionId)) return null
     if (typeof value.marker !== 'string' || !value.marker) return null
     return {
       sessionId: value.sessionId,
@@ -148,6 +148,11 @@ export const SESSION_STALE_MS = 20_000
 /** How often a live wrapper refreshes `heartbeatAt`. */
 export const SESSION_HEARTBEAT_MS = 5_000
 
+/** File-backed identities are basenames, never paths or extensions. */
+export function isSafeFileId(value: unknown): value is string {
+  return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(value)
+}
+
 export function isTerminalKind(value: unknown): value is TerminalKind {
   return (
     value === 'windows-terminal' ||
@@ -170,7 +175,7 @@ export function stripBom(input: string): string {
 export function parseSessionRecord(raw: string): AgentSessionRecord | null {
   try {
     const value = JSON.parse(stripBom(raw)) as Partial<AgentSessionRecord>
-    if (typeof value.id !== 'string' || !value.id) return null
+    if (!isSafeFileId(value.id)) return null
     if (!isAgent(value.agentId)) return null
     if (typeof value.pid !== 'number' || !Number.isFinite(value.pid)) return null
     const hwnd =
@@ -203,8 +208,8 @@ function isApprovalDecisionValue(value: unknown): value is 'once' | 'session' | 
 export function parsePromptRecord(raw: string): SessionPromptRecord | null {
   try {
     const value = JSON.parse(stripBom(raw)) as Partial<SessionPromptRecord>
-    if (typeof value.sessionId !== 'string' || !value.sessionId) return null
-    if (typeof value.promptId !== 'string' || !value.promptId) return null
+    if (!isSafeFileId(value.sessionId)) return null
+    if (!isSafeFileId(value.promptId)) return null
     if (!isAgent(value.agentId)) return null
     if (value.kind !== 'approval' && value.kind !== 'choice' && value.kind !== 'handoff') return null
     return {

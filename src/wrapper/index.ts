@@ -19,7 +19,7 @@
 import { spawn, spawnSync } from 'node:child_process'
 import { spawn as ptySpawn, type IPty } from 'node-pty'
 import { randomUUID } from 'node:crypto'
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { discoverAgents } from '../main/agents/discover'
 import { adapterEnv, buildLaunchSpec } from '../main/agents/launch'
@@ -301,11 +301,9 @@ class SessionFiles {
 
 function writeAtomic(target: string, contents: string): void {
   try {
-    const tmp = `${target}.tmp`
+    const tmp = `${target}.tmp-${process.pid}-${randomUUID()}`
     writeFileSync(tmp, contents, 'utf8')
-    rmSync(target, { force: true })
-    writeFileSync(target, contents, 'utf8')
-    rmSync(tmp, { force: true })
+    renameSync(tmp, target)
   } catch {
     // The registry is advisory. Never take the user's agent down over it.
   }

@@ -31,8 +31,9 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { readStdin } from './bridge-client'
-import { agentPid } from './mirror-store'
+import { agentPid, wrapperOwnsThisSession } from './mirror-store'
 import { clearSessionCalls } from '../node/pending-calls'
+import { isSafeFileId } from '../shared/session-registry'
 
 function registryRoot(): string {
   const local = process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local')
@@ -45,15 +46,27 @@ function done(): never {
 }
 
 function main(): void {
+  // Read first, even to stand down. Claude Code is writing this payload, and
+  // exiting before it finishes hands that write a broken pipe.
+  const raw = readStdin()
+  /*
+   * A wrapper already publishes this session, with a real window handle and a
+   * terminal kind this hook can only guess at. Publishing again produced a
+   * second row for one agent — the duplicate reading `vscode` / `hwnd: null`
+   * even for a Windows Terminal session, so the wrong one offered no handoff.
+   */
+  if (wrapperOwnsThisSession()) done()
+
   let payload: { session_id?: string; cwd?: string; hook_event_name?: string; source?: string }
   try {
-    payload = JSON.parse(readStdin().replace(/^﻿/, '')) as typeof payload
+    payload = JSON.parse(raw.replace(/^﻿/, '')) as typeof payload
   } catch {
     done()
   }
   if (!payload || typeof payload !== 'object') done()
 
-  const sessionId = typeof payload.session_id === 'string' ? payload.session_id : ''
+  // Goes straight into a file name, so it gets the same check every other id does.
+  const sessionId = isSafeFileId(payload.session_id) ? payload.session_id : ''
   if (!sessionId) done()
 
   const dir = join(registryRoot(), 'sessions')

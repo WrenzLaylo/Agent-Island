@@ -50,7 +50,9 @@ export function codexHooksPath(): string {
  * failure it prevents is silent, and Windows accepts either.
  */
 export function toHookCommand(path: string): string {
-  return path.split(BACKSLASH).join('/')
+  const clean = path.split(BACKSLASH).join('/')
+  if (/^".*"$/.test(clean)) return clean
+  return /\s/.test(clean) ? `"${clean}"` : clean
 }
 
 export function isOurs(entry: CodexHookEntry): boolean {

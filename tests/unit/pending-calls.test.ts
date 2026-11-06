@@ -10,13 +10,10 @@ import {
   readPendingCalls,
   writePendingCall,
   PENDING_CALL_TTL_MS,
-  type PendingCall
+  type PendingCall,
+  type PermissionRecord
 } from '../../src/node/pending-calls'
-import {
-  CARD_GRACE_MS,
-  hookCardFor,
-  wrapperOwnsCwd
-} from '../../src/main/agents/session-watcher'
+import { CARD_GRACE_MS, hookCardFor, wrapperOwnsCwd } from '../../src/main/agents/session-watcher'
 import { childrenMeanBusy } from '../../src/node/win32-windows'
 import type { AgentSessionRecord } from '../../src/shared/session-registry'
 
@@ -88,14 +85,14 @@ describe('calls in flight', () => {
   })
 
   it('does not mistake the permission marker for a call', () => {
-    markPermissionAsked(SESSION, root)
+    markPermissionAsked(SESSION, {}, root)
     expect(readPendingCalls(SESSION, Date.now(), root)).toHaveLength(0)
     expect(permissionWasAsked(SESSION, Date.now(), root)).toBe(true)
   })
 
   it('treats an old permission marker as spent', () => {
     // Stamped with the real clock, so the horizon has to be measured from it.
-    markPermissionAsked(SESSION, root)
+    markPermissionAsked(SESSION, {}, root)
     expect(permissionWasAsked(SESSION, Date.now() + PENDING_CALL_TTL_MS + 1, root)).toBe(false)
   })
 
@@ -107,19 +104,23 @@ describe('calls in flight', () => {
 
 describe('when a call in flight becomes a card', () => {
   const now = 1_000_000
+  const permission = (overrides: Partial<PermissionRecord> = {}): PermissionRecord => ({
+    at: now,
+    ...overrides
+  })
 
   it('shows nothing while no call is open', () => {
-    expect(hookCardFor([], now, false)).toBeNull()
+    expect(hookCardFor([], now, null)).toBeNull()
   })
 
   it('waits out the grace period before guessing', () => {
     // Otherwise every tool call in the session puts a card on screen, which is
     // unusable within seconds of real work.
-    expect(hookCardFor([call({ at: now - 500 })], now, false)).toBeNull()
+    expect(hookCardFor([call({ at: now - 500 })], now, null)).toBeNull()
   })
 
   it('shows a call that has been open too long to be ordinary', () => {
-    const card = hookCardFor([call({ at: now - CARD_GRACE_MS - 1 })], now, false)
+    const card = hookCardFor([call({ at: now - CARD_GRACE_MS - 1 })], now, null)
     expect(card?.certain).toBe(false)
   })
 
@@ -127,7 +128,7 @@ describe('when a call in flight becomes a card', () => {
     // `certain` is what lets the card say "needs your permission" instead of
     // "may need you". Only Notification can establish it, and the VS Code
     // extension never sends one.
-    const card = hookCardFor([call({ at: now })], now, true)
+    const card = hookCardFor([call({ at: now })], now, permission())
     expect(card?.certain).toBe(true)
   })
 
@@ -145,14 +146,14 @@ describe('when a call in flight becomes a card', () => {
       call({ toolUseId: 'failed', at: now - 60_000 }),
       call({ toolUseId: 'live', at: now - CARD_GRACE_MS - 1 })
     ]
-    expect(hookCardFor(calls, now, false)?.call.toolUseId).toBe('live')
+    expect(hookCardFor(calls, now, null)?.call.toolUseId).toBe('live')
   })
 
   it('shows nothing while the only call left is still inside its grace', () => {
     // The overtaken record is discarded, and what overtook it has not been
     // open long enough to mean anything yet.
     const calls = [call({ toolUseId: 'failed', at: now - 60_000 }), call({ toolUseId: 'live', at: now })]
-    expect(hookCardFor(calls, now, false)).toBeNull()
+    expect(hookCardFor(calls, now, null)).toBeNull()
   })
 
   it('keeps a whole parallel burst eligible', () => {
@@ -163,12 +164,12 @@ describe('when a call in flight becomes a card', () => {
       call({ toolUseId: 'b', at: now - CARD_GRACE_MS - 200 }),
       call({ toolUseId: 'c', at: now - CARD_GRACE_MS - 100 })
     ]
-    expect(hookCardFor(calls, now, false)?.call.toolUseId).toBe('a')
+    expect(hookCardFor(calls, now, null)?.call.toolUseId).toBe('a')
   })
 
   it('describes the call that has waited longest when nothing overtook it', () => {
     const calls = [call({ toolUseId: 'old', at: now - 60_000 })]
-    expect(hookCardFor(calls, now, false)?.call.toolUseId).toBe('old')
+    expect(hookCardFor(calls, now, null)?.call.toolUseId).toBe('old')
   })
 })
 
@@ -224,13 +225,9 @@ describe('not showing what a wrapper already shows', () => {
     return new Map(records.map((record) => [record.id, record]))
   }
 
-  it('defers to a wrapper watching the same directory', () => {
-    // The wrapper's card can actually be answered; this one cannot.
-    expect(wrapperOwnsCwd(map(hook, session({})), hook)).toBe(true)
-  })
-
-  it('ignores trailing separators and case', () => {
-    expect(wrapperOwnsCwd(map(hook, session({ cwd: 'c:\\repo\\' })), hook)).toBe(true)
+  it('does not suppress an unrelated VS Code session in the same directory', () => {
+    // CWD is not identity: a terminal and VS Code commonly work in one repo.
+    expect(wrapperOwnsCwd(map(hook, session({})), hook)).toBe(false)
   })
 
   it('shows its own card when no wrapper is there', () => {
