@@ -80,7 +80,7 @@ export class WrapperRun {
     return join(this.registryRoot, name)
   }
 
-  start(steps: Step[], options: { tailMs?: number } = {}): void {
+  start(steps: Step[], options: { tailMs?: number; hermesStructuredBridge?: boolean } = {}): void {
     const binDir = join(this.root, 'bin')
     mkdirSync(binDir, { recursive: true })
 
@@ -108,6 +108,12 @@ export class WrapperRun {
     env.LOCALAPPDATA = this.root
     env.FAKE_AGENT_SCENARIO = scenarioPath
     env.FAKE_AGENT_RECORD = this.recordPath
+
+    if (options.hermesStructuredBridge) {
+      const bridgeDir = join(this.root, 'hermes', 'plugins', 'agent-island-bridge')
+      mkdirSync(bridgeDir, { recursive: true })
+      writeFileSync(join(bridgeDir, 'plugin.yaml'), 'name: agent-island-bridge\nversion: test\n')
+    }
 
     this.child = ptySpawn(process.execPath, [WRAPPER, this.agentId], {
       name: 'xterm-256color',
