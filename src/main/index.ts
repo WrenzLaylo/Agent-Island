@@ -110,6 +110,8 @@ let tuckedSide: DockSide | null = null
 let tuckReturn: { x: number; y: number } | null = null
 let boundsAnimationToken = 0
 let isAnimatingBounds = false
+const shortcutRegistrationErrors: string[] = []
+let systemReducedMotion = false
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max)
@@ -248,7 +250,7 @@ async function animateIslandTo(target: IslandBounds): Promise<boolean> {
     start.width === target.width &&
     start.height === target.height
 
-  if (unchanged || getSettings().reducedMotion) {
+  if (unchanged || getSettings().reducedMotion || systemReducedMotion) {
     mainWindow.setBounds(target, false)
     windowAnchor = { x: target.x, y: target.y }
     saveCurrentLayout()
@@ -346,9 +348,13 @@ function homeBounds(width: number, height: number): IslandBounds {
 async function returnIslandHome(notifyRenderer = true): Promise<IslandWindowLayout> {
   if (!mainWindow) return currentLayout()
   showIsland()
+  isTucked = false
+  tuckedSide = null
+  tuckReturn = null
   dockSide = null
   const bounds = mainWindow.getBounds()
   await animateIslandTo(homeBounds(bounds.width, bounds.height))
+  mainWindow.webContents.send('island:tucked-changed', false)
   if (notifyRenderer) mainWindow.webContents.send('island:return-home')
   return currentLayout()
 }
@@ -474,7 +480,8 @@ function applySettingsSideEffects(previous: IslandSettings, next: IslandSettings
     mainWindow.setAlwaysOnTop(next.alwaysOnTop, 'screen-saver')
   }
   if (previous.launchAtStartup !== next.launchAtStartup) {
-    applyLaunchAtStartup(next.launchAtStartup)
+    const actual = applyLaunchAtStartup(next.launchAtStartup)
+    if (actual !== next.launchAtStartup) updateSettings({ launchAtStartup: actual })
   }
   if (previous.preferredDockSide !== next.preferredDockSide && next.preferredDockSide !== 'none') {
     dockSide = next.preferredDockSide
@@ -484,14 +491,14 @@ function applySettingsSideEffects(previous: IslandSettings, next: IslandSettings
     }
   }
   rebuildTrayMenu()
-  mainWindow?.webContents.send('island:settings-changed', next)
+  mainWindow?.webContents.send('island:settings-changed', getSettings())
 }
 
 function updateAppSettings(patch: Partial<IslandSettings>): IslandSettings {
   const previous = getSettings()
   const next = updateSettings(patch)
   applySettingsSideEffects(previous, next)
-  return next
+  return getSettings()
 }
 
 /**
@@ -556,6 +563,9 @@ function rebuildTrayMenu(): void {
         accelerator: 'CommandOrControl+Alt+Home',
         click: () => void returnIslandHome()
       },
+      ...(shortcutRegistrationErrors.length > 0
+        ? [{ label: `Keyboard shortcuts unavailable: ${shortcutRegistrationErrors.join(', ')}`, enabled: false }]
+        : []),
       { type: 'separator' },
       {
         /*
@@ -899,6 +909,17 @@ function createWindow(): void {
     if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return
     mainWindow.webContents.send('island:window-focus', true)
   })
+  mainWindow.on('close', (event) => {
+    if (isQuitting) return
+    event.preventDefault()
+    mainWindow?.hide()
+  })
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  mainWindow.webContents.on('will-attach-webview', (event) => event.preventDefault())
+  mainWindow.webContents.on('will-navigate', (event, targetUrl) => {
+    const currentUrl = mainWindow?.webContents.getURL()
+    if (targetUrl !== currentUrl) event.preventDefault()
+  })
 
   if (isDev && process.env.ELECTRON_RENDERER_URL) {
     void mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
@@ -961,6 +982,9 @@ function registerIpc(): void {
               }))
   ipcMain.handle('island:uninstall-claude-hook', () => uninstallClaudeHook())
   ipcMain.handle('island:set-tucked', (_event: unknown, value: unknown) => setIslandTucked(value === true))
+  ipcMain.handle('island:set-system-reduced-motion', (_event: unknown, value: unknown) => {
+    systemReducedMotion = value === true
+  })
   ipcMain.handle('island:is-tucked', () => isTucked)
   ipcMain.handle('island:finish-drag', () => finishIslandDrag())
   ipcMain.handle('island:return-home', () => returnIslandHome(false))
@@ -1139,6 +1163,10 @@ if (!hasInstanceLock) {
 }
 
 app.on('second-instance', () => {
+  if (isTucked) {
+    void setIslandTucked(false).then(() => showIsland({ focus: true }))
+    return
+  }
   showIsland({ focus: true })
 })
 
@@ -1194,9 +1222,13 @@ async function bootstrap(): Promise<void> {
   sessionWatcher.start()
   void bridgeWatcher.start()
   void hookWatcher.start()
-  discoveryCache = await discoverAgents()
   createWindow()
   createTray()
+  void discoverAgents()
+    .then((result) => {
+      discoveryCache = result
+    })
+    .catch((error) => console.warn('Could not discover agents:', error))
 
   initUpdater()
   // The tray label is the only surface for update state, so it has to follow it.
@@ -1216,17 +1248,30 @@ async function bootstrap(): Promise<void> {
     if (actual !== settings.launchAtStartup) updateSettings({ launchAtStartup: actual })
   }
 
-  globalShortcut.register('Control+Alt+Space', () => {
+  const toggleRegistered = globalShortcut.register('Control+Alt+Space', () => {
     // Opening the island by shortcut is a deliberate act, so it takes focus.
     // Without that it would open unfocused and the idle-retract below would
     // immediately close it again.
+    if (isTucked) {
+      void setIslandTucked(false).then(() => {
+        showIsland({ focus: true })
+        mainWindow?.webContents.send('island:toggle')
+      })
+      return
+    }
     showIsland({ focus: true })
     mainWindow?.webContents.send('island:toggle')
   })
 
-  globalShortcut.register('CommandOrControl+Alt+Home', () => {
+  const homeRegistered = globalShortcut.register('CommandOrControl+Alt+Home', () => {
     void returnIslandHome()
   })
+  if (!toggleRegistered) shortcutRegistrationErrors.push('Ctrl+Alt+Space')
+  if (!homeRegistered) shortcutRegistrationErrors.push('Ctrl+Alt+Home')
+  if (shortcutRegistrationErrors.length > 0) {
+    console.warn(`Could not register global shortcuts: ${shortcutRegistrationErrors.join(', ')}`)
+    rebuildTrayMenu()
+  }
 
   // Resolution changes, DPI changes and hot-plugged monitors can all leave the
   // island parked outside every work area. Re-clamp against whatever displays
@@ -1234,8 +1279,12 @@ async function bootstrap(): Promise<void> {
   const reconcileToDisplays = () => {
     if (!mainWindow || mainWindow.isDestroyed()) return
     cancelBoundsAnimation()
+    isTucked = false
+    tuckedSide = null
+    tuckReturn = null
     const bounds = mainWindow.getBounds()
     mainWindow.setBounds(getIslandBounds(bounds.width, bounds.height), false)
+    mainWindow.webContents.send('island:tucked-changed', false)
     saveCurrentLayout()
   }
 
