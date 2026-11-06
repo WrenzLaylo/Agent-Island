@@ -102,6 +102,8 @@ function withoutOurs(groups: HookMatcher[] | undefined): HookMatcher[] {
 export interface HookCommands {
   /** PreToolUse: records the call, never waits. */
   record: string
+  /** PostToolUse: closes the record PreToolUse opened. */
+  post: string
   /** Notification: raises the card beside the agent's own prompt. */
   notify: string
   /** SessionStart / SessionEnd: publishes the session itself. */
@@ -118,7 +120,7 @@ export function withHookInstalled(
   // Ours are dropped first and re-added, so installing twice is idempotent and
   // a command path can change between versions without stacking duplicates.
   /*
-   * Short timeout. This hook only writes one small file and returns `ask`;
+   * Short timeout. This hook only writes one small file and exits silently;
    * nothing about a tool call should ever wait on Agent Island. The 130s it
    * used to allow was for the version that blocked until the user answered,
    * which is exactly the behaviour being removed.
@@ -134,10 +136,41 @@ export function withHookInstalled(
   ]
 
   /*
-   * Written in the same pass as PreToolUse, deliberately. Installing one
-   * without the other is the failure that matters: PreToolUse alone records
-   * calls nobody reads, and Notification alone can only say "Claude needs your
-   * permission" with no idea what for.
+   * The other half of PreToolUse, and installed in the same pass for the same
+   * reason the others are: PreToolUse alone opens records that nothing ever
+   * closes, so every card it raised would stay up until its ten-minute TTL.
+   */
+  hooks.PostToolUse = [
+    ...withoutOurs(hooks.PostToolUse),
+    {
+      matcher: CLAUDE_HOOK_MATCHER,
+      hooks: [
+        { type: 'command', command: toHookCommand(commands.post), timeout: 10, _source: HOOK_MARKER }
+      ]
+    }
+  ]
+
+  /*
+   * The same script again, because PostToolUse does not fire for a call that
+   * failed and its record would otherwise stay open until its TTL. The end of a
+   * turn is the one moment nothing can still be in flight.
+   */
+  hooks.Stop = [
+    ...withoutOurs(hooks.Stop),
+    {
+      matcher: '',
+      hooks: [
+        { type: 'command', command: toHookCommand(commands.post), timeout: 10, _source: HOOK_MARKER }
+      ]
+    }
+  ]
+
+  /*
+   * Notification does not fire in the VS Code extension — measured — so it is
+   * an accelerator rather than the mechanism. Where a host does send it, it
+   * tells the island that a call in flight is genuinely a permission prompt,
+   * and the card skips the grace period and says so plainly instead of
+   * hedging.
    */
   hooks.Notification = [
     ...withoutOurs(hooks.Notification),
@@ -182,7 +215,14 @@ export function withHookRemoved(settings: ClaudeSettings): ClaudeSettings {
   const hooks: Record<string, HookMatcher[]> = { ...next.hooks }
   // Every event we might have written to, not just PreToolUse — leaving a
   // SessionStart entry behind would keep publishing sessions after removal.
-  for (const event of ['PreToolUse', 'Notification', 'SessionStart', 'SessionEnd']) {
+  for (const event of [
+    'PreToolUse',
+    'PostToolUse',
+    'Stop',
+    'Notification',
+    'SessionStart',
+    'SessionEnd'
+  ]) {
     if (!Array.isArray(hooks[event])) continue
     const cleaned = withoutOurs(hooks[event])
     if (cleaned.length > 0) hooks[event] = cleaned

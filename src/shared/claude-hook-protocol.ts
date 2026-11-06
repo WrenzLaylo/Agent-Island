@@ -7,10 +7,9 @@
  *
  * The whole design is shaped by one hazard: this code runs *inside the user's
  * agent*, synchronously, before their work can continue. Anything that hangs
- * here hangs Claude Code itself. So every path out of the hook returns `ask`
- * unless the user has genuinely answered — `ask` hands control back to Claude's
- * own permission UI, which is exactly the behaviour someone gets today without
- * Agent Island installed.
+ * here hangs Claude Code itself. So every path out of the hook exits silently,
+ * which leaves the decision with Claude's own permission policy: exactly the
+ * behaviour someone gets today without Agent Island installed.
  */
 
 export type HookPermission = 'allow' | 'deny' | 'ask'
@@ -63,6 +62,7 @@ export interface HookInput {
   hook_event_name?: string
   tool_name?: string
   tool_input?: Record<string, unknown>
+  tool_use_id?: string
 }
 
 export interface ParsedHookInput {
@@ -70,6 +70,15 @@ export interface ParsedHookInput {
   cwd: string
   toolName: string
   toolInput: Record<string, unknown>
+  /**
+   * Claude's id for this specific call, present on PreToolUse and PostToolUse
+   * alike. It is what lets the second event close the record the first opened,
+   * which matters because tools run in parallel and a session-wide record would
+   * be cleared by whichever call finished first.
+   */
+  toolUseId: string
+  /** `PreToolUse`, `PostToolUse`, `Stop` — one script serves several. */
+  event: string
 }
 
 export function parseHookInput(raw: string): ParsedHookInput | null {
@@ -86,7 +95,9 @@ export function parseHookInput(raw: string): ParsedHookInput | null {
       toolInput:
         value.tool_input && typeof value.tool_input === 'object'
           ? (value.tool_input as Record<string, unknown>)
-          : {}
+          : {},
+      toolUseId: typeof value.tool_use_id === 'string' ? value.tool_use_id : '',
+      event: typeof value.hook_event_name === 'string' ? value.hook_event_name : ''
     }
   } catch {
     return null
@@ -172,8 +183,8 @@ export function hookResponse(permission: HookPermission, reason: string): string
  * Whether the island is close enough to answer.
  *
  * Read from the bridge heartbeat, so a stopped or crashed island costs the user
- * nothing: the hook returns `ask` immediately and Claude prompts as usual,
- * rather than waiting out a timeout on every single tool call.
+ * nothing: the hook exits immediately and Claude behaves as usual, rather
+ * than waiting out a timeout on every single tool call.
  */
 export const ISLAND_HEARTBEAT_STALE_MS = 15_000
 

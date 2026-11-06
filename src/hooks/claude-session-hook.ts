@@ -12,24 +12,27 @@
  *
  * Two details make the record survive without a wrapper to tend it:
  *
- *  - `pid` is `process.ppid`, the Claude process this hook was spawned by. The
- *    watcher only reaps a stale session whose pid is also gone, so a live
- *    session is never reaped even though nothing heartbeats it.
+ *  - `pid` is the agent's own pid, from `CLAUDE_PID`. See `agentPid`: this used
+ *    to be `process.ppid` and the comment here used to call that "the Claude
+ *    process this hook was spawned by", which it never was. It is the shell
+ *    Claude spawns to *run* the hook, dead before the hook's output is read.
  *  - `hwnd` is null. There is no window to raise — a webview panel is not
  *    something an outside process can focus — and claiming otherwise would put
  *    a "Continue in Terminal" button on a session that has no terminal.
  *
- * `SessionEnd` was observed not to fire for a headless (`-p`) run, so the
- * record can outlive its session. That is survivable rather than fixed: the
- * watcher reaps any session whose heartbeat is stale *and* whose pid is gone,
- * and nothing heartbeats these, so a dead one disappears within seconds.
- * Measured at five. SessionEnd is kept because it removes the record promptly
- * when it does fire.
+ * `SessionEnd` was observed not to fire for a headless (`-p`) run, so the record
+ * can outlive its session; the watcher reaps one whose heartbeat is stale and
+ * whose pid is gone. The note that used to sit here read "a dead one disappears
+ * within seconds. Measured at five" as evidence that worked. It was measuring
+ * the bug: the pid was always dead, so what disappeared within seconds was every
+ * *live* session too.
  */
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { readStdin } from './bridge-client'
+import { agentPid } from './mirror-store'
+import { clearSessionCalls } from '../node/pending-calls'
 
 function registryRoot(): string {
   const local = process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local')
@@ -61,6 +64,10 @@ function main(): void {
   if (payload.hook_event_name === 'SessionEnd') {
     try {
       rmSync(file, { force: true })
+      // Anything still open belonged to a session that no longer exists. The
+      // TTL would clear it eventually; leaving a card up for ten minutes after
+      // the chat closed is not "eventually" enough.
+      clearSessionCalls(sessionId)
     } catch {
       // A session record that outlives its session is reaped by age anyway.
     }
@@ -76,9 +83,8 @@ function main(): void {
         {
           id: `claude-hook-${sessionId}`,
           agentId: 'claude',
-          // The Claude process that spawned this hook. Its liveness is what
-          // keeps the record from being reaped.
-          pid: process.ppid,
+          // The agent itself, not the shell that ran this hook — see `agentPid`.
+          pid: agentPid(),
           hwnd: null,
           terminalKind: 'vscode',
           terminalLabel: 'Claude Code (no terminal)',
