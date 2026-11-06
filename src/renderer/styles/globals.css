@@ -823,9 +823,9 @@ select:focus-visible,
 
 .session-row {
   display: flex;
-  width: 100%;
   height: var(--session-row-h);
-  flex: 0 0 var(--session-row-h);
+  flex: 1 1 auto;
+  min-width: 0;
   align-items: center;
   gap: var(--s-2);
   padding: 0 var(--s-2);
@@ -1337,6 +1337,23 @@ select:focus-visible,
   background: rgba(255, 123, 128, 0.08);
   font-size: var(--fs-xs);
   line-height: 1.45;
+}
+
+/* Shown only when the island has focus, because that is when the key works. */
+.decision-key {
+  display: none;
+  margin-left: auto;
+  padding: 0 var(--s-2);
+  border: 1px solid var(--edge);
+  border-radius: var(--r-sm);
+  color: var(--text-2);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  line-height: 20px;
+}
+
+[data-window-focused="true"] .decision-key {
+  display: block;
 }
 
 .decision-list {

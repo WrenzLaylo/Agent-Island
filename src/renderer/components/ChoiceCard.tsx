@@ -1,6 +1,7 @@
 import { motion } from 'framer-motion'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { APPROVAL_REARM_MS, approvalReArmed } from '@shared/approval-guard'
+import { isTypingTarget, rowForKey } from '@shared/approval-keys'
 import type { ApprovalRequest } from '@shared/contracts'
 
 interface ChoiceCardProps {
@@ -41,11 +42,26 @@ export function ChoiceCard({ prompt, disabled = false, onOption, onText, onOpenT
   }, [prompt.id])
 
   const inert = disabled || !armed
+  // One answer per card from the keyboard, however fast the second key lands.
+  const keyedRef = useRef<string | null>(null)
 
   const chooseOption = (index: number) => {
     if (!approvalReArmed(shownAtRef.current, Date.now())) return
     onOption(index)
   }
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (isTypingTarget(event.target)) return
+      const option = rowForKey(options, event)
+      if (!option || inert || keyedRef.current === prompt.id) return
+      event.preventDefault()
+      keyedRef.current = prompt.id
+      chooseOption(option.index)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  })
 
   const submitText = () => {
     const text = draft.trim()
@@ -73,6 +89,7 @@ export function ChoiceCard({ prompt, disabled = false, onOption, onText, onOpenT
             data-no-drag="true"
             onClick={() => chooseOption(option.index)}
             disabled={inert}
+            aria-keyshortcuts={String(option.index)}
             whileTap={!inert ? { scale: 0.985 } : undefined}
           >
             <span className="choice-index">{option.index}</span>
