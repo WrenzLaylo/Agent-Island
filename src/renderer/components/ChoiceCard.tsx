@@ -5,6 +5,8 @@ import { isTypingTarget, rowForKey } from '@shared/approval-keys'
 import type { ApprovalRequest } from '@shared/contracts'
 
 interface ChoiceCardProps {
+  reducedMotion?: boolean
+  landingId?: string
   prompt: ApprovalRequest
   disabled?: boolean
   onOption: (index: number) => void
@@ -25,7 +27,15 @@ interface ChoiceCardProps {
  * routinely offers options *and* accepts free input. Typing here sends the
  * text followed by Enter, exactly as if it had been typed in the terminal.
  */
-export function ChoiceCard({ prompt, disabled = false, onOption, onText, onOpenTerminal }: ChoiceCardProps) {
+export function ChoiceCard({
+  reducedMotion = false,
+  landingId,
+  prompt,
+  disabled = false,
+  onOption,
+  onText,
+  onOpenTerminal
+}: ChoiceCardProps) {
   const options = useMemo(() => prompt.options ?? [], [prompt.options])
   const [draft, setDraft] = useState('')
 
@@ -41,12 +51,14 @@ export function ChoiceCard({ prompt, disabled = false, onOption, onText, onOpenT
     return () => window.clearTimeout(timer)
   }, [prompt.id])
 
-  const inert = disabled || !armed
+  const [chosen, setChosen] = useState<number | null>(null)
+  const inert = disabled || !armed || chosen !== null
   // One answer per card from the keyboard, however fast the second key lands.
   const keyedRef = useRef<string | null>(null)
 
   const chooseOption = (index: number) => {
     if (!approvalReArmed(shownAtRef.current, Date.now())) return
+    setChosen(index)
     onOption(index)
   }
 
@@ -85,7 +97,8 @@ export function ChoiceCard({ prompt, disabled = false, onOption, onText, onOpenT
           <motion.button
             key={option.index}
             type="button"
-            className="choice-button"
+            className={`choice-button ${chosen === option.index ? 'is-chosen' : ''}`}
+            layoutId={chosen === option.index && !reducedMotion ? landingId : undefined}
             data-no-drag="true"
             onClick={() => chooseOption(option.index)}
             disabled={inert}

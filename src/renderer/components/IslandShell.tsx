@@ -201,6 +201,41 @@ function transientTitle(state: IslandSnapshot): string {
  * rather than queueing exit-then-enter, which used to take ~470ms against a
  * ~250ms window morph and made the transition feel like two separate events.
  */
+/**
+ * The mark and the title are the same object in every view, so they travel
+ * between views instead of fading out and back in. The window has its own
+ * spring in the main process; this one only has to feel like it belongs.
+ */
+const MORPH_SPRING = { type: 'spring', stiffness: 420, damping: 36, mass: 0.9 } as const
+const LANDING_ID = 'decision-landing'
+
+function shared(id: string, reduced: boolean) {
+  return reduced ? {} : { layoutId: id, transition: { layout: MORPH_SPRING } }
+}
+
+/** Drawn on arrival: the stroke is the confirmation that the answer landed. */
+function TransientGlyph({ kind, reduced }: { kind: string | undefined; reduced: boolean }) {
+  if (kind === 'error' || kind === 'expired' || kind === 'cancelled') return <>!</>
+  const paths = kind === 'denied' ? ['M7 7l10 10', 'M17 7L7 17'] : ['M5 12.5l4.5 4.5L19 7.5']
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      {paths.map((d, index) => (
+        <motion.path
+          key={d}
+          d={d}
+          stroke="currentColor"
+          strokeWidth="2.4"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          initial={reduced ? false : { pathLength: 0 }}
+          animate={{ pathLength: 1 }}
+          transition={{ duration: 0.26, delay: 0.08 + index * 0.08, ease: [0.2, 0, 0, 1] }}
+        />
+      ))}
+    </svg>
+  )
+}
+
 function contentFade(enter: number, exit: number) {
   return {
     initial: { opacity: 0 },
@@ -261,6 +296,7 @@ export function IslandShell(props: IslandShellProps) {
   const isCompact = state.mode === 'collapsed' && !docked && !panel
   const view = panel ?? (isDockOrb ? 'dock' : isCompact ? 'compact' : state.mode)
   const approvalAgent = approval ? state.agents[approval.agentId] : active
+  const reduced = settings.reducedMotion
   const fade = contentFade(settings.reducedMotion ? 0.01 : 0.16, settings.reducedMotion ? 0.01 : 0.1)
 
   return (
@@ -334,20 +370,20 @@ export function IslandShell(props: IslandShellProps) {
               <span className="quiet-idle-hit-area" aria-hidden="true" />
             ) : (
               <>
-                <span className="compact-leading" data-drag-region="true">
+                <motion.span className="compact-leading" data-drag-region="true" {...shared('island-mark', reduced)}>
                   <AgentMark agentId={hasApproval && approval ? approval.agentId : active.id} compact />
                   <StatusDot status={hasApproval ? 'waiting' : active.status} />
-                </span>
+                </motion.span>
                 <span className="compact-copy" data-drag-region="true">
                   {/* The count lives in the trailing chip; repeating it here as
                       "1 pending" said the same thing twice on one 300px pill. */}
-                  <strong>
+                  <motion.strong layout="position" {...shared('island-title', reduced)}>
                     {hasApproval
                       ? isChoicePrompt
                         ? `${approvalAgent.label} is asking`
                         : 'Approval required'
                       : active.label}
-                  </strong>
+                  </motion.strong>
                   <small>{hasApproval ? approvalAgent.label : active.activityLabel || 'Ready'}</small>
                 </span>
                 <span className="compact-trailing" data-drag-region="true">
@@ -381,7 +417,7 @@ export function IslandShell(props: IslandShellProps) {
           >
             <div className="panel-header handoff-header" data-drag-region="true">
               <div className="header-agent">
-                <span className="header-mark-wrap"><AgentMark agentId={terminalInput.agentId} compact /><StatusDot status="waiting" /></span>
+                <motion.span className="header-mark-wrap" {...shared('island-mark', reduced)}><AgentMark agentId={terminalInput.agentId} compact /><StatusDot status="waiting" /></motion.span>
                 <span>
                   <strong>
                     {handoffHeadline(terminalInput.title, state.agents[terminalInput.agentId].label)}
@@ -463,12 +499,14 @@ export function IslandShell(props: IslandShellProps) {
           >
             <div className="panel-header approval-panel-header" data-drag-region="true">
               <div className="header-agent">
-                <span className="header-mark-wrap"><AgentMark agentId={approval.agentId} compact /><StatusDot status="waiting" /></span>
+                <motion.span className="header-mark-wrap" {...shared('island-mark', reduced)}><AgentMark agentId={approval.agentId} compact /><StatusDot status="waiting" /></motion.span>
                 <span>
                   {/* A question is not a permission grant; saying "Approval
                       required" over plan mode would misdescribe what the user
                       is about to agree to. */}
-                  <strong>{isChoicePrompt ? `${approvalAgent.label} is asking` : 'Approval required'}</strong>
+                  <motion.strong layout="position" {...shared('island-title', reduced)}>
+                    {isChoicePrompt ? `${approvalAgent.label} is asking` : 'Approval required'}
+                  </motion.strong>
                   <small>
                     {[
                       approval.terminalLabel
@@ -501,6 +539,9 @@ export function IslandShell(props: IslandShellProps) {
             </div>
             {isChoicePrompt ? (
               <ChoiceCard
+                key={approval.id}
+                reducedMotion={reduced}
+                landingId={LANDING_ID}
                 prompt={approval}
                 disabled={isMorphing}
                 onOption={onChoiceOption}
@@ -509,6 +550,9 @@ export function IslandShell(props: IslandShellProps) {
               />
             ) : (
               <ApprovalCard
+                key={approval.id}
+                reducedMotion={reduced}
+                landingId={LANDING_ID}
                 approval={approval}
                 approveEnabled={approveEnabled}
                 disabled={isMorphing}
@@ -519,9 +563,16 @@ export function IslandShell(props: IslandShellProps) {
           </motion.div>
         ) : state.mode === 'success' || state.mode === 'error' ? (
           <motion.div key={`transient-${state.transientKind}`} className="island-content transient-view" {...fade}>
-            <div className={`transient-symbol kind-${state.transientKind ?? 'approved'}`} aria-hidden="true">
-              {state.transientKind === 'error' || state.transientKind === 'expired' || state.transientKind === 'cancelled' ? '!' : state.transientKind === 'denied' ? '×' : '✓'}
-            </div>
+            <motion.div className="transient-landing" {...(reduced ? {} : { layoutId: LANDING_ID, transition: { layout: MORPH_SPRING } })}>
+            <motion.div
+              className={`transient-symbol kind-${state.transientKind ?? 'approved'}`}
+              aria-hidden="true"
+              initial={reduced ? false : { scale: 0.72 }}
+              animate={{ scale: 1 }}
+              transition={MORPH_SPRING}
+            >
+              <TransientGlyph kind={state.transientKind} reduced={reduced} />
+            </motion.div>
             <div className="transient-copy">
               <strong>{transientTitle(state)}</strong>
               <small>{state.message ?? 'The agent is continuing.'}</small>
@@ -530,13 +581,14 @@ export function IslandShell(props: IslandShellProps) {
             {state.transientKind === 'error' ? (
               <button type="button" className="quiet-button" data-no-drag="true" onClick={onDismiss}>Dismiss</button>
             ) : null}
+            </motion.div>
           </motion.div>
         ) : (
           <motion.div key="peek" className="island-content overview-view" {...fade}>
             <div className="panel-header" data-drag-region="true">
               <div className="header-agent">
-                <span className="header-mark-wrap"><AgentMark agentId={active.id} compact /><StatusDot status={active.status} /></span>
-                <span><strong>{active.label}</strong></span>
+                <motion.span className="header-mark-wrap" {...shared('island-mark', reduced)}><AgentMark agentId={active.id} compact /><StatusDot status={active.status} /></motion.span>
+                <span><motion.strong layout="position" {...shared('island-title', reduced)}>{active.label}</motion.strong></span>
               </div>
               <div className="panel-actions">
                 {hasApproval ? <span className="pending-chip">{queueCount}</span> : null}

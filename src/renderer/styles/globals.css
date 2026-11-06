@@ -1339,6 +1339,43 @@ select:focus-visible,
   line-height: 1.45;
 }
 
+/* Everything below the header follows the mark into the view. Applied to the
+   view's direct children, never inside a scroller: a transform there would
+   inflate scrollHeight and make the overflow check resize the window. */
+@keyframes content-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+.island-content > :not(.panel-header, .transient-landing) {
+  animation: content-rise 240ms var(--ease) 50ms backwards;
+}
+
+.island-content > :nth-child(3) {
+  animation-delay: 90ms;
+}
+
+.island-content > :nth-child(4) {
+  animation-delay: 130ms;
+}
+
+[data-reduced-motion="true"] .island-content > * {
+  animation: none;
+}
+
+/* The chosen row stays lit while the others step back. */
+.decision-list .decision-button:disabled:not(.is-chosen),
+.choice-list .choice-button:disabled:not(.is-chosen) {
+  transition: opacity var(--motion) var(--ease);
+}
+
+.decision-list:has(.is-chosen) .decision-button:not(.is-chosen),
+.choice-list:has(.is-chosen) .choice-button:not(.is-chosen) {
+  opacity: 0.25;
+}
+
 /* Shown only when the island has focus, because that is when the key works. */
 .decision-key {
   display: none;
@@ -1514,8 +1551,15 @@ select:focus-visible,
 .transient-view {
   display: flex;
   align-items: center;
-  gap: var(--s-3);
   padding: var(--s-4);
+}
+
+.transient-landing {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: var(--s-3);
 }
 
 .transient-symbol {
