@@ -79,6 +79,11 @@ export function claudeNotifyHookLauncher(): string {
   return join(launcherDir(), 'claude-notify-hook.cmd')
 }
 
+/** PermissionRequest / PermissionDenied, which say so outright. */
+export function claudePermissionHookLauncher(): string {
+  return join(launcherDir(), 'claude-permission-hook.cmd')
+}
+
 function wrapperPath(): string {
   // out/main/wrapper.js next to out/main/index.js in both dev and packaged runs.
   const packed = join(app.getAppPath(), 'out', 'main', 'wrapper.js')
@@ -157,7 +162,14 @@ export function ensureLauncherScripts(): string {
    * out/ does not leave the user's settings pointing at a file that is gone.
    * Regenerated here on every launch for exactly that reason.
    */
-  for (const hook of ['claude', 'codex', 'claude-session', 'claude-notify', 'claude-post'])
+  for (const hook of [
+    'claude',
+    'codex',
+    'claude-session',
+    'claude-notify',
+    'claude-post',
+    'claude-permission'
+  ])
     writeHookLauncher(dir, exe, hook)
 
   return dir
@@ -353,15 +365,34 @@ function installCmdAutoRun(): void {
   writeAutoRun(existing ? `${existing} & ${autoRunSegment()}` : autoRunSegment())
 }
 
+/** Remove our command without splitting ampersands inside quotes or after ^. */
+export function removeAgentIslandAutoRun(existing: string): string {
+  const parts: string[] = []
+  let current = ''
+  let quoted = false
+  for (let index = 0; index < existing.length; index += 1) {
+    const char = existing[index]
+    if (char === '^' && index + 1 < existing.length) {
+      current += char + existing[index + 1]
+      index += 1
+      continue
+    }
+    if (char === '"') quoted = !quoted
+    if (char === '&' && !quoted) {
+      if (current.trim()) parts.push(current.trim())
+      current = ''
+      continue
+    }
+    current += char
+  }
+  if (current.trim()) parts.push(current.trim())
+  return parts.filter((part) => !part.toLowerCase().includes(AUTORUN_SCRIPT)).join(' & ')
+}
+
 function removeCmdAutoRun(): void {
   const existing = readAutoRun()
   if (!existing.includes(AUTORUN_SCRIPT)) return
-  const kept = existing
-    .split('&')
-    .map((part) => part.trim())
-    .filter((part) => part && !part.includes(AUTORUN_SCRIPT))
-    .join(' & ')
-  writeAutoRun(kept)
+  writeAutoRun(removeAgentIslandAutoRun(existing))
 }
 
 function bashProfilePath(): string {

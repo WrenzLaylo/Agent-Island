@@ -10,6 +10,8 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { randomUUID } from 'node:crypto'
+import { isSafeFileId } from '../shared/session-registry'
 
 export function registryRoot(): string {
   const local = process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local')
@@ -48,6 +50,47 @@ export function agentPid(): number {
 }
 
 /**
+ * The `island` wrapper hosting this session, if one is.
+ *
+ * The wrapper exports `AGENT_ISLAND_SESSION` when it spawns the agent, and
+ * Claude Code passes its own environment down to every hook it runs — so this
+ * is readable from inside a hook, exactly, with no inference.
+ *
+ * Returns '' for a session no wrapper launched: the VS Code extension, or
+ * `claude` started by hand.
+ */
+export function wrapperSessionId(): string {
+  const value = process.env.AGENT_ISLAND_SESSION
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+/**
+ * Whether to stand down entirely, because a wrapper owns this session.
+ *
+ * A wrapper is strictly better placed than these hooks: it scrapes the panel,
+ * so its card carries the real choices and can be *answered*, and it knows the
+ * terminal window so the card can offer a handoff. Everything a hook publishes
+ * for such a session is a second, worse copy of that.
+ *
+ * The cost of publishing anyway was not cosmetic. The hook's card is a
+ * `handoff` — it has no options by construction — and it was landing on top of
+ * the wrapper's answerable one, so a CLI session that could always be answered
+ * from the island started saying "Claude needs your permission" with nothing to
+ * click. That is what a user means by "he broke it".
+ *
+ * Ownership used to be decided by comparing working directories. That looked
+ * equivalent and is not: the wrapper records the directory it was *launched*
+ * in, while a hook reports where the session is *now*, so a single `cd` —
+ * or opening a project below home — silently separated the two records for the
+ * same process. Measured: wrapper `6cf53b71` in `the home folder`, its own child
+ * claude reporting `the repo folder`, pid 11064 whose
+ * parent was the wrapper's 18056.
+ */
+export function wrapperOwnsThisSession(): boolean {
+  return wrapperSessionId() !== ''
+}
+
+/**
  * Publish or refresh the session record for a hook-hosted session.
  *
  * Nothing heartbeats these — there is no wrapper — so a record written once
@@ -60,7 +103,7 @@ export function agentPid(): number {
  * install time would never appear at all.
  */
 export function touchSession(sessionId: string, cwd: string): void {
-  if (!sessionId) return
+  if (!isSafeFileId(sessionId)) return
   const id = `claude-hook-${sessionId}`
   try {
     const dir = join(registryRoot(), 'sessions')
@@ -84,7 +127,7 @@ export function touchSession(sessionId: string, cwd: string): void {
       // First sighting of this session.
     }
 
-    const tmp = `${target}.tmp`
+    const tmp = `${target}.tmp-${process.pid}-${randomUUID()}`
     writeFileSync(
       tmp,
       JSON.stringify(

@@ -22,8 +22,15 @@ const COMMAND = 'C:\\Users\\x\\AppData\\Roaming\\agent-island\\bin\\claude-hook.
 const NOTIFY_CMD = 'C:/Users/x/AppData/Roaming/agent-island/bin/claude-notify-hook.cmd'
 const SESSION_COMMAND = 'C:/Users/x/AppData/Roaming/agent-island/bin/claude-session-hook.cmd'
 const POST_CMD = 'C:/Users/x/AppData/Roaming/agent-island/bin/claude-post-hook.cmd'
-/** All five events install together; see `HookCommands`. */
-const CMDS = { record: COMMAND, post: POST_CMD, notify: NOTIFY_CMD, session: SESSION_COMMAND }
+const PERMISSION_CMD = 'C:/Users/x/AppData/Roaming/agent-island/bin/claude-permission-hook.cmd'
+/** Every hook command installs together; see `HookCommands`. */
+const CMDS = {
+  record: COMMAND,
+  post: POST_CMD,
+  notify: NOTIFY_CMD,
+  permission: PERMISSION_CMD,
+  session: SESSION_COMMAND
+}
 
 describe('hook input', () => {
   it('reads what Claude Code sends', () => {
@@ -135,6 +142,16 @@ describe('settings.json editing', () => {
     expect(isOurs(entry!)).toBe(true)
   })
 
+  it('does not report a partial legacy install as current', () => {
+    const partial: ClaudeSettings = {
+      hooks: {
+        PreToolUse: [{ matcher: '', hooks: [{ type: 'command', command: COMMAND, _source: 'agent-island' }] }]
+      }
+    }
+    expect(hookIsInstalled(partial)).toBe(false)
+    expect(hookIsInstalled(withHookInstalled({}, CMDS))).toBe(true)
+  })
+
   it('leaves the user\u2019s own hooks alone', () => {
     /*
      * The whole reason for the marker. Someone else's PreToolUse hook must
@@ -164,6 +181,33 @@ describe('settings.json editing', () => {
     const entries = (twice.hooks?.PreToolUse ?? []).flatMap((group) => group.hooks ?? [])
     expect(entries.filter(isOurs)).toHaveLength(1)
     expect(entries[0].command).toBe('C:/new/path/claude-hook.cmd')
+  })
+
+  it('replaces legacy Agent Island entries after Claude strips the marker', () => {
+    const legacy: ClaudeSettings = {
+      hooks: {
+        PreToolUse: [
+          {
+            matcher: '',
+            hooks: [
+              {
+                type: 'command',
+                command: 'C:/Users/x/AppData/Roaming/agent-island/bin/claude-hook.cmd',
+                timeout: 10
+              }
+            ]
+          }
+        ]
+      }
+    }
+
+    const installed = withHookInstalled(legacy, CMDS)
+    const entries = (installed.hooks?.PreToolUse ?? []).flatMap((group) => group.hooks ?? [])
+    expect(entries).toHaveLength(1)
+    expect(entries[0]._source).toBe('agent-island')
+
+    const removed = withHookRemoved(legacy)
+    expect(removed.hooks).toBeUndefined()
   })
 
   it('cleans up after itself completely', () => {
@@ -272,6 +316,12 @@ describe('the hook command path', () => {
     expect(toHookCommand('C:/already/clean.cmd')).toBe('C:/already/clean.cmd')
   })
 
+  it('quotes a launcher path containing spaces', () => {
+    expect(toHookCommand('C:\\Users\\John Doe\\AppData\\Roaming\\agent-island\\bin\\claude-hook.cmd')).toBe(
+      '"C:/Users/John Doe/AppData/Roaming/agent-island/bin/claude-hook.cmd"'
+    )
+  })
+
   it('applies it to what actually gets installed', () => {
     const entry = withHookInstalled({}, { ...CMDS, record: WINDOWS_PATH }).hooks?.PreToolUse?.at(-1)?.hooks?.[0]
     expect(entry?.command).not.toContain(BACKSLASH)
@@ -343,8 +393,26 @@ describe('publishing the session itself', () => {
      * all.
      */
     const next = withHookInstalled({}, CMDS)
-    for (const event of ['PreToolUse', 'Notification', 'SessionStart', 'SessionEnd']) {
+    for (const event of [
+      'PreToolUse',
+      'PostToolUse',
+      'PostToolUseFailure',
+      'Notification',
+      'PermissionRequest',
+      'PermissionDenied',
+      'SessionStart',
+      'SessionEnd'
+    ]) {
       expect(next.hooks?.[event], event).toBeDefined()
+    }
+  })
+
+  it('uses the dedicated permission hook for VS Code permission events', () => {
+    const next = withHookInstalled({}, CMDS)
+    for (const event of ['PermissionRequest', 'PermissionDenied']) {
+      const entry = next.hooks?.[event]?.at(-1)?.hooks?.[0]
+      expect(entry?.command, event).toBe(PERMISSION_CMD)
+      expect(entry?.timeout, event).toBeLessThanOrEqual(10)
     }
   })
 

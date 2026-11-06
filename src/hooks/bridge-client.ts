@@ -83,7 +83,7 @@ export function askIsland(options: AskOptions, root = bridgeRoot()): string | nu
     })
     // Written aside and renamed: the island watches this directory, and a
     // half-written file would be read as a malformed request.
-    const tmp = `${target}.tmp`
+    const tmp = `${target}.tmp-${process.pid}-${randomUUID()}`
     writeFileSync(tmp, payload, 'utf8')
     renameSync(tmp, target)
   } catch {

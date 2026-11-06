@@ -14,6 +14,8 @@ import { EventEmitter } from 'node:events'
 import type { AgentId, ApprovalDecision, ApprovalRequest, RiskLevel } from '../../shared/contracts'
 import { AGENT_LABELS } from '../../shared/contracts'
 import { classifyCommandRisk } from './hermes-approval'
+import { isSafeFileId } from '../../shared/session-registry'
+import { randomUUID } from 'node:crypto'
 
 export interface BridgePendingFile {
   id: string
@@ -121,9 +123,11 @@ export async function writeDecision(
   choice: ApprovalDecision,
   root = bridgeRoot()
 ): Promise<void> {
+  if (!isSafeFileId(id)) throw new Error('Invalid approval request id')
+  if (!APPROVAL_DECISIONS.includes(choice)) throw new Error('Invalid approval decision')
   await ensureBridgeDirs(root)
   const target = join(decisionsDir(root), `${id}.json`)
-  const tmp = `${target}.tmp`
+  const tmp = `${target}.tmp-${process.pid}-${randomUUID()}`
   const payload = JSON.stringify(
     {
       id,
@@ -160,8 +164,18 @@ export async function scanPending(root = bridgeRoot()): Promise<BridgePendingFil
       // likely to emit UTF-8 with a BOM, and JSON.parse rejects the leading
       // U+FEFF. Silently dropping those requests means an agent waits forever
       // for a decision the island never showed.
-      const parsed = JSON.parse(stripBom(raw)) as BridgePendingFile
-      if (parsed?.id && parsed?.command) out.push(parsed)
+      const parsed = JSON.parse(stripBom(raw)) as Partial<BridgePendingFile>
+      const fileId = name.slice(0, -'.json'.length)
+      if (!isSafeFileId(fileId) || parsed.id !== fileId) continue
+      if (typeof parsed.command !== 'string' || parsed.command.length === 0) continue
+      if (typeof parsed.createdAt !== 'number' || !Number.isFinite(parsed.createdAt)) continue
+      if (parsed.description !== undefined && typeof parsed.description !== 'string') continue
+      if (parsed.sessionKey !== undefined && typeof parsed.sessionKey !== 'string') continue
+      if (parsed.surface !== undefined && typeof parsed.surface !== 'string') continue
+      if (parsed.cwd !== undefined && typeof parsed.cwd !== 'string') continue
+      if (parsed.expiresAt !== undefined && (typeof parsed.expiresAt !== 'number' || !Number.isFinite(parsed.expiresAt))) continue
+      if (parsed.choices !== undefined && !Array.isArray(parsed.choices)) continue
+      out.push(parsed as BridgePendingFile)
     } catch (error) {
       console.warn(`Ignoring unreadable approval request ${name}:`, error)
     }
@@ -170,6 +184,7 @@ export async function scanPending(root = bridgeRoot()): Promise<BridgePendingFil
 }
 
 export async function removePending(id: string, root = bridgeRoot()): Promise<void> {
+  if (!isSafeFileId(id)) return
   try {
     await unlink(join(pendingDir(root), `${id}.json`))
   } catch {
@@ -182,6 +197,8 @@ export class ApprovalBridgeWatcher extends EventEmitter {
   private pollTimer: NodeJS.Timeout | null = null
   private heartbeatTimer: NodeJS.Timeout | null = null
   private known = new Map<string, BridgePendingFile>()
+  private refreshing: Promise<void> | null = null
+  private refreshAgain = false
   private readonly root: string
 
   constructor(root = bridgeRoot()) {
@@ -197,19 +214,19 @@ export class ApprovalBridgeWatcher extends EventEmitter {
   async start(): Promise<void> {
     await ensureBridgeDirs(this.root)
     await writeHeartbeat(this.root)
-    await this.refresh()
+    await this.requestRefresh()
 
     const dir = pendingDir(this.root)
     try {
       this.watcher = watch(dir, { persistent: true }, () => {
-        void this.refresh()
+        void this.requestRefresh()
       })
     } catch {
       // fall back to poll only
     }
 
     this.pollTimer = setInterval(() => {
-      void this.refresh()
+      void this.requestRefresh()
     }, 1500)
 
     this.heartbeatTimer = setInterval(() => {
@@ -228,6 +245,22 @@ export class ApprovalBridgeWatcher extends EventEmitter {
 
   list(): ApprovalRequest[] {
     return [...this.known.values()].map(bridgePendingToApproval)
+  }
+
+  private requestRefresh(): Promise<void> {
+    if (this.refreshing) {
+      this.refreshAgain = true
+      return this.refreshing
+    }
+    this.refreshing = (async () => {
+      do {
+        this.refreshAgain = false
+        await this.refresh()
+      } while (this.refreshAgain)
+    })().finally(() => {
+      this.refreshing = null
+    })
+    return this.refreshing
   }
 
   private async refresh(): Promise<void> {

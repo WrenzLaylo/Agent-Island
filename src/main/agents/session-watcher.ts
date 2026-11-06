@@ -16,6 +16,7 @@ import {
   isSessionStale,
   parsePromptRecord,
   parseSessionRecord,
+  isSafeFileId,
   type AgentSessionRecord,
   type SessionDecisionRecord,
   type SessionPromptRecord
@@ -24,10 +25,13 @@ import { decisionsDir, ensureRegistryDirs, promptsDir, sessionsDir } from '../..
 import { isRunningCommand, processAlive } from '../../node/win32-windows'
 import {
   PENDING_CALL_TTL_MS,
-  permissionWasAsked,
   readPendingCalls,
-  type PendingCall
+  readPermission,
+  clearSessionCalls,
+  type PendingCall,
+  type PermissionRecord
 } from '../../node/pending-calls'
+import { randomUUID } from 'node:crypto'
 
 const POLL_MS = 1000
 
@@ -112,11 +116,36 @@ export function sessionShouldBeReaped(
 export function hookCardFor(
   calls: PendingCall[],
   now: number,
-  permissionAsked: boolean
+  permission: PermissionRecord | null
 ): { call: PendingCall; certain: boolean } | null {
+  /*
+   * A `PermissionRequest` marker names the tool it is about, so the card can be
+   * raised from it alone — at the instant of the ask, with no grace period and
+   * nothing inferred. This is the path that works in the VS Code extension,
+   * where there is no `Notification` and the pending call below could only ever
+   * have been a guess.
+   */
+  if (permission?.command) {
+    return {
+      call: {
+        // No `tool_use_id` in the payload, so the timestamp is the identity.
+        // Stable while this permission is open, different for the next one,
+        // which is exactly what the fingerprint below needs.
+        toolUseId: `permission-${permission.at}`,
+        toolName: permission.toolName ?? '',
+        command: permission.command,
+        cwd: '',
+        at: permission.at
+      },
+      certain: true
+    }
+  }
+
   const oldest = newestBatch(calls)[0]
   if (!oldest) return null
-  if (permissionAsked) return { call: oldest, certain: true }
+  // A marker with no command came from `Notification`, which knows a permission
+  // is pending but not what for. The call in flight supplies the description.
+  if (permission) return { call: oldest, certain: true }
   if (now - oldest.at >= CARD_GRACE_MS) return { call: oldest, certain: false }
   return null
 }
@@ -146,29 +175,15 @@ function newestBatch(calls: PendingCall[]): PendingCall[] {
   return calls.filter((call) => newest - call.at <= BATCH_WINDOW_MS)
 }
 
-function normaliseCwd(cwd: string | undefined): string {
-  return String(cwd ?? '').replace(/[\\/]+$/, '').toLowerCase()
-}
-
 /**
- * Whether an `island` wrapper is already watching this session's directory.
- *
- * The same hooks fire in a terminal, where the wrapper raises a card that can
- * actually be answered. Matched on cwd because the two mechanisms share no id:
- * the wrapper mints its own uuid and Claude Code mints another.
+ * Compatibility seam for old callers. CWD is never identity: VS Code and a
+ * terminal commonly use one repository. Hooks now stand down only when the
+ * wrapper-exported AGENT_ISLAND_SESSION proves ownership at the source.
  */
 export function wrapperOwnsCwd(
-  sessions: Map<string, AgentSessionRecord>,
-  record: AgentSessionRecord
+  _sessions: Map<string, AgentSessionRecord>,
+  _record: AgentSessionRecord
 ): boolean {
-  const target = normaliseCwd(record.cwd)
-  if (!target) return false
-  for (const other of sessions.values()) {
-    if (other.id === record.id) continue
-    if (other.id.startsWith(HOOK_SESSION_PREFIX)) continue
-    if (other.agentId !== 'claude') continue
-    if (normaliseCwd(other.cwd) === target) return true
-  }
   return false
 }
 
@@ -253,6 +268,7 @@ export class SessionWatcher extends EventEmitter {
 
   /** Island's answer to an approval. The wrapper picks this up and types it. */
   writeDecision(decision: SessionDecisionRecord): boolean {
+    if (!isSafeFileId(decision.sessionId) || !isSafeFileId(decision.promptId)) return false
     try {
       ensureRegistryDirs()
       writeFileSync(
@@ -320,9 +336,7 @@ export class SessionWatcher extends EventEmitter {
       const sessionId = record.id.slice(HOOK_SESSION_PREFIX.length)
       const target = join(promptsDir(), `${record.id}.json`)
 
-      const card = wrapperOwnsCwd(sessions, record)
-        ? null
-        : hookCardFor(readPendingCalls(sessionId, now), now, permissionWasAsked(sessionId, now))
+      const card = hookCardFor(readPendingCalls(sessionId, now), now, readPermission(sessionId, now))
 
       if (!card) {
         if (existsSync(target)) rmSync(target, { force: true })
@@ -370,7 +384,7 @@ export class SessionWatcher extends EventEmitter {
         fingerprint
       }
       try {
-        const tmp = `${target}.tmp`
+        const tmp = `${target}.tmp-${process.pid}-${randomUUID()}`
         writeFileSync(tmp, JSON.stringify(prompt, null, 2), 'utf8')
         renameSync(tmp, target)
       } catch {
@@ -413,6 +427,9 @@ export class SessionWatcher extends EventEmitter {
         rmSync(join(sessionsDir(), name), { force: true })
         rmSync(join(promptsDir(), `${record.id}.json`), { force: true })
         rmSync(join(decisionsDir(), `${record.id}.json`), { force: true })
+        if (record.id.startsWith(HOOK_SESSION_PREFIX)) {
+          clearSessionCalls(record.id.slice(HOOK_SESSION_PREFIX.length))
+        }
         continue
       }
       nextSessions.set(record.id, record)

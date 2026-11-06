@@ -21,7 +21,10 @@ export default defineConfig({
           'codex-hook': resolve('src/hooks/codex-hook.ts'),
           'claude-session-hook': resolve('src/hooks/claude-session-hook.ts'),
           'claude-notify-hook': resolve('src/hooks/claude-notify-hook.ts'),
-          'claude-post-hook': resolve('src/hooks/claude-post-hook.ts')
+          'claude-post-hook': resolve('src/hooks/claude-post-hook.ts'),
+          // PermissionRequest / PermissionDenied — the events that say a
+          // permission is genuinely being asked, in every host.
+          'claude-permission-hook': resolve('src/hooks/claude-permission-hook.ts')
         }
       }
     }

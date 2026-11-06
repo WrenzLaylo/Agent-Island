@@ -11,7 +11,7 @@
  * the question away from terminals too, where the island could already show it
  * *and* answer it, because there it can send keystrokes.
  *
- * So this exits silently and records only what it saw. The agent
+ * So this returns `ask` immediately and records only what it saw. The agent
  * asks wherever it normally would; `claude-notify-hook` raises a card beside
  * it from this record. Nothing is intercepted.
  *
@@ -25,7 +25,7 @@ import {
   toolNeedsApproval
 } from '../shared/claude-hook-protocol'
 import { readStdin } from './bridge-client'
-import { touchSession } from './mirror-store'
+import { touchSession, wrapperOwnsThisSession } from './mirror-store'
 import { writePendingCall } from '../node/pending-calls'
 
 function done(): never {
@@ -35,7 +35,15 @@ function done(): never {
 }
 
 function main(): void {
-  const input = parseHookInput(readStdin())
+  // Read first, even to stand down. Claude Code is writing this payload, and
+  // exiting before it finishes hands that write a broken pipe.
+  const raw = readStdin()
+  // A wrapper-hosted session is the wrapper's to report. See
+  // `wrapperOwnsThisSession` — recording here produced a second, unanswerable
+  // card that covered the real one.
+  if (wrapperOwnsThisSession()) done()
+
+  const input = parseHookInput(raw)
   if (!input) done()
 
   // Reads and searches are skipped here rather than by a matcher, so a tool
