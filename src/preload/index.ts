@@ -63,6 +63,7 @@ export interface IslandApi {
   finishDrag: () => Promise<IslandWindowLayout>
   /** Slide the island off the screen edge, or bring it back. */
   setTucked: (tucked: boolean) => Promise<boolean>
+  setSystemReducedMotion: (reduced: boolean) => Promise<void>
   isTucked: () => Promise<boolean>
   onTuckedChanged: (handler: (tucked: boolean) => void) => () => void
   returnHome: () => Promise<IslandWindowLayout>
@@ -145,6 +146,7 @@ const api: IslandApi = {
   setPosition: (x, y) => ipcRenderer.invoke('island:set-position', x, y),
   finishDrag: () => ipcRenderer.invoke('island:finish-drag'),
   setTucked: (tucked) => ipcRenderer.invoke('island:set-tucked', tucked),
+  setSystemReducedMotion: (reduced) => ipcRenderer.invoke('island:set-system-reduced-motion', reduced),
   isTucked: () => ipcRenderer.invoke('island:is-tucked'),
   onTuckedChanged: (handler) => {
     const listener = (_event: unknown, tucked: boolean) => handler(tucked)
