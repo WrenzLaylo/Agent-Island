@@ -11,6 +11,9 @@ import {
 } from '@shared/contracts'
 
 interface ApprovalCardProps {
+  reducedMotion?: boolean
+  /** Shared with the confirmation, so the chosen row carries on into it. */
+  landingId?: string
   approval: ApprovalRequest
   approveEnabled: boolean
   disabled?: boolean
@@ -108,7 +111,15 @@ function DecisionIcon({ choice }: { choice: ApprovalDecision }) {
   return <span aria-hidden="true">✓</span>
 }
 
-export function ApprovalCard({ approval, approveEnabled, disabled = false, onDecision, onOption }: ApprovalCardProps) {
+export function ApprovalCard({
+  reducedMotion = false,
+  landingId,
+  approval,
+  approveEnabled,
+  disabled = false,
+  onDecision,
+  onOption
+}: ApprovalCardProps) {
   const [pendingPermanent, setPendingPermanent] = useState<{ index: number | null; decision: ApprovalDecision | null } | null>(null)
   /*
    * Prefer the agent's own wording and ordering. The fallback list exists for
@@ -151,7 +162,10 @@ export function ApprovalCard({ approval, approveEnabled, disabled = false, onDec
     return () => window.clearTimeout(timer)
   }, [approval.id])
 
-  const inert = disabled || !armed
+  // Set the moment an answer is sent, so a second click cannot follow it and
+  // the row can carry on into the confirmation.
+  const [chosen, setChosen] = useState<string | null>(null)
+  const inert = disabled || !armed || chosen !== null
   const elapsed = useElapsed(approval.createdAt)
 
   /**
@@ -167,6 +181,7 @@ export function ApprovalCard({ approval, approveEnabled, disabled = false, onDec
       setPendingPermanent(row)
       return
     }
+    setChosen(`${row.decision}-${row.index ?? 'x'}`)
     if (row.index != null) onOption(row.index, row.decision)
     else if (row.decision) onDecision(row.decision)
   }
@@ -263,11 +278,13 @@ export function ApprovalCard({ approval, approveEnabled, disabled = false, onDec
             // Unclassified rows are gated like approvals, never like denials.
             const isDeny = isDenyRow(row)
             const buttonDisabled = inert || (!isDeny && !approveEnabled)
+            const rowId = `${row.decision}-${row.index ?? 'x'}`
             return (
               <motion.button
-                key={`${row.decision}-${row.index ?? 'x'}`}
+                key={rowId}
                 type="button"
-                className={`decision-button decision-${row.decision ?? 'other'}`}
+                className={`decision-button decision-${row.decision ?? 'other'} ${chosen === rowId ? 'is-chosen' : ''}`}
+                layoutId={chosen === rowId && !reducedMotion ? landingId : undefined}
                 data-no-drag="true"
                 onClick={() => choose(row)}
                 disabled={buttonDisabled}
