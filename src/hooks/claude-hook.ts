@@ -11,7 +11,7 @@
  * the question away from terminals too, where the island could already show it
  * *and* answer it, because there it can send keystrokes.
  *
- * So this returns `ask` immediately and records only what it saw. The agent
+ * So this exits silently and records only what it saw. The agent
  * asks wherever it normally would; `claude-notify-hook` raises a card beside
  * it from this record. Nothing is intercepted.
  *
@@ -21,26 +21,25 @@
  */
 import {
   describeToolCall,
-  hookResponse,
   parseHookInput,
   toolNeedsApproval
 } from '../shared/claude-hook-protocol'
 import { readStdin } from './bridge-client'
 import { recordCall, touchSession } from './mirror-store'
 
-function answer(reason: string): never {
-  // Always `ask`: the agent decides how to ask, and the user answers it there.
-  process.stdout.write(hookResponse('ask', reason))
+function done(): never {
+  // Mirror mode observes only. A permissionDecision here would override
+  // Claude's native policy, including forcing prompts for safe tools.
   process.exit(0)
 }
 
 function main(): void {
   const input = parseHookInput(readStdin())
-  if (!input) answer('Agent Island could not read the hook payload')
+  if (!input) done()
 
   // Reads and searches are skipped here rather than by a matcher, so a tool
   // this build has never heard of is still recorded and still surfaces.
-  if (!toolNeedsApproval(input.toolName)) answer('Read-only tool')
+  if (!toolNeedsApproval(input.toolName)) done()
 
   // Every tool call is proof this session is alive, and the record it keeps
   // fresh is what stops the island greying the row out.
@@ -53,7 +52,7 @@ function main(): void {
     at: Date.now()
   })
 
-  answer('Recorded by Agent Island')
+  done()
 }
 
 try {
@@ -61,5 +60,5 @@ try {
 } catch {
   // A bug here must degrade to "Agent Island is not involved", never to a
   // session that cannot continue.
-  answer('Agent Island hook failed')
+  done()
 }
