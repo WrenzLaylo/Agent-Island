@@ -28,10 +28,7 @@ export const AGENT_ADAPTERS: Record<AgentId, AgentAdapterDescriptor> = {
     label: 'Claude',
     integrationMode: 'terminal-basic',
     defaultArgs: [],
-    env: {
-      // Avoid nested noisy wrappers when hosted inside Agent Island.
-      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1'
-    },
+    env: {},
     capabilities: {
       interactiveTerminal: true,
       multiSession: true,

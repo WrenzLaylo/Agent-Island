@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { getAdapter, describeAdapterMode } from '../../src/shared/adapters'
-import { buildLaunchSpec, mergeDiscoveryWithAdapter } from '../../src/main/agents/launch'
+import { adapterEnv, buildLaunchSpec, mergeDiscoveryWithAdapter } from '../../src/main/agents/launch'
 
 describe('adapters', () => {
   it('keeps Claude terminal-basic while enabling known Codex terminal approvals', () => {
@@ -20,6 +20,12 @@ describe('adapters', () => {
   it('enables island approvals for hermes in phase 4', () => {
     const adapter = getAdapter('hermes')
     expect(adapter.capabilities.islandApprovals).toBe(true)
+  })
+
+  it('leaves Claude free to reach its own services, so Remote Control keeps working', () => {
+    // CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC turns /remote-control into
+    // "Unknown command" for every wrapped session.
+    expect(adapterEnv('claude')).not.toHaveProperty('CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC')
   })
 
   it('describes modes for diagnostics', () => {
